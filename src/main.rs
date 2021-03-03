@@ -1,9 +1,6 @@
 mod camera;
 mod objects;
 mod ray;
-
-use std::usize;
-
 use crate::objects::Intersect;
 use cgmath::{InnerSpace, Point3, Vector3};
 use image::{Rgb, RgbImage};
@@ -73,5 +70,5 @@ fn main() {
             );
         }
     }
-    img.save("empty.png");
+    img.save("render.png");
 }
