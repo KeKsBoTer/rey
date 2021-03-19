@@ -1,0 +1,152 @@
+#version 450
+#define MIN_DISTANCE 0.001
+
+layout(local_size_x = 64) in;
+
+layout(std430, set=0, binding=0) buffer SrcBuffer {
+    float srcVertices[];
+};
+
+layout(set = 0, binding = 1, rgba8) writeonly uniform image2D dstImage;
+
+struct Ray{
+    vec3 orig;
+    vec3 dir;
+};
+
+Ray new_ray(vec3 orig, vec3 dir){
+    return Ray(orig,normalize(dir));
+}
+
+struct Intersection{
+    vec3 pos;
+    vec3 normal;
+    vec3 color;
+    float lambda;
+};
+
+
+struct Camera{
+    vec3 pos;
+    float focal_length;
+    vec2 size;
+};
+
+Ray cast_ray_from_camera(Camera c,vec2 uv){
+    return Ray(
+        c.pos,
+        normalize(vec3((uv.x-0.5)*c.size.x,-(uv.y-0.5)*c.size.y,c.focal_length))
+    );
+}
+
+struct Sphere{
+    float radius;
+    vec3 center;
+    vec3 color;
+};
+
+
+float sphere_distance(Sphere s, Ray ray){
+    vec3 d = ray.orig - s.center;
+    float vd = dot(ray.dir,d);
+
+    float dd = dot(d,d); // length squared 
+
+    float r = s.radius;
+
+    float a = vd * vd - dd + r * r;
+    if(a<=0.){
+        return -1;
+    }    
+    float ss = sqrt(a);
+    float l1 = -vd + ss;
+    float l2 = -vd - ss;
+
+    if (l2 > MIN_DISTANCE){
+        return l2;
+    } else if (l1 > MIN_DISTANCE){
+        return l1;
+    } else {
+        return -1;
+    }
+}
+
+Intersection sphere_intersection(Sphere s, Ray ray, float lambda){
+    vec3 intersect = ray.orig + lambda * ray.dir;
+    vec3 normal = (intersect - s.center) / s.radius;
+
+    return Intersection(
+        intersect,
+        normal,
+        s.color,
+        lambda
+    );
+}
+
+struct Ground{
+    float y;
+    vec3 color;
+};
+
+float ground_distance(Ground g, Ray ray){
+    float l = (g.y - ray.orig.y) / ray.dir.y;
+    if(l < MIN_DISTANCE) {
+        return -1;
+    }else{
+        return l;
+    }
+}
+
+Intersection ground_intersection(Ground g, Ray ray, float lambda){
+    return Intersection(
+        ray.orig+ray.dir*lambda,
+        vec3(0,1,0),
+        g.color,
+        lambda
+    );
+}
+
+
+void main() {
+
+    vec3 sun_dir = normalize(vec3(.5,.5,-.1));
+
+    vec2 size = vec2(800,600);//vec2(gl_NumWorkGroups.xy);
+    vec2 xy = vec2(gl_GlobalInvocationID.xy);
+
+    Camera c = Camera(vec3(0,0,0),1,size/size.y);
+
+    Ray ray = cast_ray_from_camera(c,xy/size);
+
+    Sphere s = Sphere(1,vec3(0,0,10),vec3(1,0,0));
+
+    Ground g = Ground(-1,vec3(0,1,0));
+
+    vec4 colorOut = vec4(.5,.5,1,1);
+    
+    float s_lambda = sphere_distance(s,ray);
+    float g_lambda = ground_distance(g,ray);
+
+    if(s_lambda >= 0){
+        if(g_lambda == -1 || (g_lambda >=0 && s_lambda < g_lambda)){
+            Intersection i = sphere_intersection(s,ray,s_lambda);
+            float sun_i = sphere_distance(s,Ray(
+                i.pos,
+                sun_dir
+            ));
+            colorOut.rgb = s.color * (sun_i == -1 ? 1 : 0.5);
+        }
+    }
+    if(g_lambda >= 0){
+        if(s_lambda == -1 || (s_lambda >=0 && g_lambda < s_lambda)){
+            Intersection i = sphere_intersection(s,ray,g_lambda);
+            float sun_i = sphere_distance(s,Ray(
+                i.pos,
+                sun_dir
+            ));
+            colorOut.rgb = g.color * (sun_i == -1 ? 1 : 0.5);
+        }
+    }
+
+    imageStore(dstImage, ivec2(gl_GlobalInvocationID.xy), colorOut);//vec4((ray.dir+1)/2,1));
+}

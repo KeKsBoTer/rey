@@ -10,3 +10,17 @@ edition = "2018"
 cgmath = "0.18.0"
 image =  "0.23.13"
 rand = "0.8.3"
+wgpu = "0.7.0"
+wgpu-subscriber = "0.1.0"
+pollster = "0.2.1"
+winit = "0.22"
+futures = "0.3"
+env_logger = "0.7"
+bytemuck = { version = "1.5.1", features = [ "derive" ] }
+
+[build-dependencies]
+anyhow = "1.0"
+fs_extra = "1.2"
+glob = "0.3"
+rayon = "1.4"
+shaderc = "0.7"
