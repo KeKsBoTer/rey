@@ -1,5 +1,7 @@
 #version 450
 #define MIN_DISTANCE 0.001
+#define PI  3.14159265359
+#define PI2 6.28318530717
 
 layout(local_size_x = 64) in;
 
@@ -8,6 +10,28 @@ layout(std430, set=0, binding=0) buffer SrcBuffer {
 };
 
 layout(set = 0, binding = 1, rgba8) writeonly uniform image2D dstImage;
+
+layout(set=1, binding=0) 
+uniform Uniforms {
+    mat4 u_view_proj;
+};
+
+float seed = 0.0;
+vec2 UV = vec2(0.0);
+
+
+// Helper functions.
+float random() {
+	return fract(sin(dot(UV, vec2(12.9898, 78.233)) + seed++) * 43758.5453);
+}
+
+vec3 randomUnitVector() {
+	float theta = random() * PI2;
+    float z = random() * 2.0 - 1.0;
+    float a = sqrt(1.0 - z * z);
+    vec3 vector = vec3(a * cos(theta), a * sin(theta), z);
+    return vector * sqrt(random());
+}
 
 struct Ray{
     vec3 orig;
@@ -27,15 +51,16 @@ struct Intersection{
 
 
 struct Camera{
-    vec3 pos;
     float focal_length;
-    vec2 size;
+    float ratio;
 };
 
 Ray cast_ray_from_camera(Camera c,vec2 uv){
+    vec3 ray = vec3((uv.x-0.5)*c.ratio,-(uv.y-0.5),1);
+    ray = normalize(mat3(u_view_proj) * ray);
     return Ray(
-        c.pos,
-        normalize(vec3((uv.x-0.5)*c.size.x,-(uv.y-0.5)*c.size.y,c.focal_length))
+        u_view_proj[3].xyz,
+        normalize(mat3(u_view_proj) * ray)
     );
 }
 
@@ -106,46 +131,48 @@ Intersection ground_intersection(Ground g, Ray ray, float lambda){
     );
 }
 
+bool hitScene(Ray ray, inout Intersection i){
+    float closest = 1.0 / 0.0; // aka. infinity
+    bool hitAny = false;
 
-void main() {
-
-    vec3 sun_dir = normalize(vec3(.5,.5,-.1));
-
-    vec2 size = vec2(800,600);//vec2(gl_NumWorkGroups.xy);
-    vec2 xy = vec2(gl_GlobalInvocationID.xy);
-
-    Camera c = Camera(vec3(0,0,0),1,size/size.y);
-
-    Ray ray = cast_ray_from_camera(c,xy/size);
-
-    Sphere s = Sphere(1,vec3(0,0,10),vec3(1,0,0));
+    Sphere s = Sphere(1,vec3(0,0,10),vec3(1,0,0));  
 
     Ground g = Ground(-1,vec3(0,1,0));
 
-    vec4 colorOut = vec4(.5,.5,1,1);
-    
     float s_lambda = sphere_distance(s,ray);
     float g_lambda = ground_distance(g,ray);
 
     if(s_lambda >= 0){
-        if(g_lambda == -1 || (g_lambda >=0 && s_lambda < g_lambda)){
-            Intersection i = sphere_intersection(s,ray,s_lambda);
-            float sun_i = sphere_distance(s,Ray(
-                i.pos,
-                sun_dir
-            ));
-            colorOut.rgb = s.color * (sun_i == -1 ? 1 : 0.5);
-        }
+        i = sphere_intersection(s,ray,s_lambda);
+        closest = i.lambda;
+        hitAny = true;
     }
-    if(g_lambda >= 0){
-        if(s_lambda == -1 || (s_lambda >=0 && g_lambda < s_lambda)){
-            Intersection i = sphere_intersection(s,ray,g_lambda);
-            float sun_i = sphere_distance(s,Ray(
-                i.pos,
-                sun_dir
-            ));
-            colorOut.rgb = g.color * (sun_i == -1 ? 1 : 0.5);
-        }
+    if(g_lambda >= 0 && closest > g_lambda){
+        i = ground_intersection(g,ray,g_lambda);
+        hitAny = true;
+    }
+    return hitAny;
+}
+
+
+void main() {
+    vec2 size = vec2(gl_NumWorkGroups.xy);
+    vec2 xy = vec2(gl_GlobalInvocationID.xy);
+
+    seed = float(gl_GlobalInvocationID.x)/float(gl_GlobalInvocationID.y+1) + float(gl_LocalInvocationID.x)/float(gl_LocalInvocationID.y+1);
+
+    vec3 sun_dir = randomUnitVector();
+
+
+    Camera c = Camera(1,size.x/size.y);
+
+    Ray ray = cast_ray_from_camera(c,xy/size);
+
+    vec4 colorOut = vec4(.5,.5,1,1);
+    
+    Intersection i;
+    if(hitScene(ray,i)){
+        colorOut.rgb = i.color;
     }
 
     imageStore(dstImage, ivec2(gl_GlobalInvocationID.xy), colorOut);//vec4((ray.dir+1)/2,1));

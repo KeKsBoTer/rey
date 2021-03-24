@@ -13,7 +13,7 @@ rand = "0.8.3"
 wgpu = "0.7.0"
 wgpu-subscriber = "0.1.0"
 pollster = "0.2.1"
-winit = "0.22"
+winit = "0.24"
 futures = "0.3"
 env_logger = "0.7"
 bytemuck = { version = "1.5.1", features = [ "derive" ] }
