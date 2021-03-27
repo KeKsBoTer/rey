@@ -33,9 +33,7 @@ impl Camera {
     }
 
     pub fn calc_matrix(&self) -> Matrix4<f32> {
-        let mut rot: Matrix4<f32> = self.rot_matrix();
-        rot.w = self.position.to_homogeneous();
-        rot
+        Matrix4::from_translation(self.position.to_vec()) * self.rot_matrix()
     }
 }
 

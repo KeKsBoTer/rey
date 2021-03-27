@@ -1,31 +1,36 @@
 use core::f32;
 use std::iter;
 
-use std::time::{SystemTime};
-use cgmath::prelude::*;
+use cgmath::{Vector2, prelude::*};
 
 use wgpu::util::DeviceExt;
 use winit::{
     event::*,
     event_loop::{ControlFlow, EventLoop},
-    window::{Window},
+    window::Window,
 };
 
-mod pipeline;
-mod lib;
 mod camera;
+mod lib;
+mod pipeline;
+
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 struct Uniforms {
     view_proj: [[f32; 4]; 4],
+    time: f32
 }
-
 
 impl Uniforms {
     fn new() -> Self {
         Self {
             view_proj: cgmath::Matrix4::identity().into(),
+            time:0.0,
         }
+    }
+
+    fn increment_time(&mut self, dt:f32){
+        self.time+=dt;
     }
 
     // UPDATED!
@@ -34,14 +39,11 @@ impl Uniforms {
     }
 }
 
-
 struct State {
 
-    timestamp: SystemTime,
-
-    camera: camera::Camera,                      
-    projection: camera::Projection,              
-    camera_controller: camera::CameraController, 
+    camera: camera::Camera,
+    projection: camera::Projection,
+    camera_controller: camera::CameraController,
     uniforms: Uniforms,
     uniform_buffer: wgpu::Buffer,
     uniform_bind_group: wgpu::BindGroup,
@@ -58,7 +60,6 @@ struct State {
     vertex_buffer: wgpu::Buffer,
     render_bind_group: wgpu::BindGroup,
 
-    comp_in_buffer: wgpu::Buffer,
     comp_bind_group: wgpu::BindGroup,
     render_bind_layout: wgpu::BindGroupLayout,
     compute_bind_layout: wgpu::BindGroupLayout,
@@ -68,15 +69,14 @@ struct State {
 
 impl State {
     async fn new(window: &Window) -> Self {
-        let mut size = window.inner_size();
-        size = winit::dpi::PhysicalSize::new(size.width/2, size.height/2);
+        let size = window.inner_size();
 
         // The instance is a handle to our GPU
         let instance = wgpu::Instance::new(wgpu::BackendBit::PRIMARY);
         let surface = unsafe { instance.create_surface(window) };
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::default(),
+                power_preference: wgpu::PowerPreference::HighPerformance,
                 compatible_surface: Some(&surface),
             })
             .await
@@ -103,23 +103,23 @@ impl State {
         };
         let swap_chain = device.create_swap_chain(&surface, &sc_desc);
 
-
-        // UPDATED!
-        let camera = camera::Camera::new((0.0, 0.0, 0.0), cgmath::Deg(0.0), cgmath::Deg(0.0),cgmath::Deg(0.0));
-        let projection =
-            camera::Projection::new(sc_desc.width, sc_desc.height, cgmath::Deg(45.0));
+        let camera = camera::Camera::new(
+            (0.0, 0.0, -10.0),
+            cgmath::Deg(0.0),
+            cgmath::Deg(0.0),
+            cgmath::Deg(0.0),
+        );
+        let projection = camera::Projection::new(sc_desc.width, sc_desc.height, cgmath::Deg(45.0));
         let camera_controller = camera::CameraController::new(4.0, 0.4);
 
         let mut uniforms = Uniforms::new();
         uniforms.update_view_proj(&camera, &projection);
-
 
         let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Uniform Buffer"),
             contents: bytemuck::cast_slice(&[uniforms]),
             usage: wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
         });
-
 
         let uniform_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -184,69 +184,33 @@ impl State {
             usage: wgpu::BufferUsage::VERTEX,
         });
 
-        let compute_bind_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Compute Binder"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,                             // The location
-                    visibility: wgpu::ShaderStage::COMPUTE, // Which shader type in the pipeline this buffer is available to.
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage {
-                            // Specifies if the buffer can only be read within the shader
-                            read_only: true,
+        let compute_bind_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Compute Binder"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStage::COMPUTE,
+                        ty: wgpu::BindingType::StorageTexture {
+                            access: wgpu::StorageTextureAccess::WriteOnly,
+                            /// Format of the texture.
+                            format: wgpu::TextureFormat::Rgba8Unorm,
+                            /// Dimension of the texture view that is going to be sampled.
+                            view_dimension: wgpu::TextureViewDimension::D2,
                         },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                        count: None,
                     },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStage::COMPUTE,
-                    ty: wgpu::BindingType::StorageTexture {
-                        access: wgpu::StorageTextureAccess::WriteOnly,
-                        /// Format of the texture.
-                        format: wgpu::TextureFormat::Rgba8Unorm,
-                        /// Dimension of the texture view that is going to be sampled.
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                    },
-                    count: None,
-                },
-            ],
-        });
+                ],
+            });
 
         let compute_pipeline = pipeline::create_compute_pipeline(
             &device,
-            &[
-                &compute_bind_layout,
-                &uniform_bind_group_layout,
-            ],
+            &[&compute_bind_layout, &uniform_bind_group_layout],
             wgpu::include_spirv!("shader.comp.spv"),
             Some("ComputePipeline"),
         );
 
-        let numbers: [f32; 3] = [0.5, 0., 0.];
-
-        let comp_in_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Input Buffer"),
-            contents: bytemuck::cast_slice(&numbers),
-            usage: wgpu::BufferUsage::STORAGE,
-        });
-
-        let out_texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Output Texture"),
-            size: wgpu::Extent3d {
-                width: size.width,
-                height: size.height,
-                depth: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsage::STORAGE,
-        });
-
+        let out_texture = lib::create_texture(&device,size.width,size.height);
         let view = out_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
         // Instantiates the bind group, once again specifying the binding of buffers.
@@ -256,10 +220,6 @@ impl State {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: comp_in_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
                     resource: wgpu::BindingResource::TextureView(&view),
                 },
             ],
@@ -275,8 +235,6 @@ impl State {
             }],
         });
 
-        let timestamp = SystemTime::now();
-
         Self {
             camera,
             projection,
@@ -285,7 +243,6 @@ impl State {
             uniform_buffer,
             uniform_bind_group,
 
-            timestamp,
             surface,
             device,
             queue,
@@ -298,7 +255,6 @@ impl State {
             vertex_buffer,
             render_bind_group,
 
-            comp_in_buffer,
             comp_bind_group,
 
             render_bind_layout,
@@ -309,30 +265,15 @@ impl State {
     }
 
     fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
-        self.size = winit::dpi::PhysicalSize::new(new_size.width/2, new_size.height/2);
+        self.size = new_size;
         self.sc_desc.width = self.size.width;
-        self.sc_desc.height = self.size.width;
+        self.sc_desc.height = self.size.height;
         self.swap_chain = self.device.create_swap_chain(&self.surface, &self.sc_desc);
-        self.projection.resize(self.size.width,self.size.height);
+        self.projection.resize(self.size.width, self.size.height);
 
-        // recreate screen texture
-
-        let out_texture = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Output Texture"),
-            size: wgpu::Extent3d {
-                width: self.size.width,
-                height: self.size.height,
-                depth: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsage::STORAGE,
-        });
-
+        let out_texture = lib::create_texture(&self.device,self.size.width,self.size.height);
         let view = out_texture.create_view(&wgpu::TextureViewDescriptor::default());
-        
+
         // Instantiates the bind group, once again specifying the binding of buffers.
         self.comp_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None,
@@ -340,10 +281,6 @@ impl State {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: self.comp_in_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
                     resource: wgpu::BindingResource::TextureView(&view),
                 },
             ],
@@ -358,10 +295,8 @@ impl State {
             }],
         });
 
-
-        println!("{:} {:}",self.size.width, self.size.height);
+        println!("{:} {:}", self.size.width, self.size.height);
     }
-
 
     // UPDATED!
     fn input(&mut self, event: &DeviceEvent) -> bool {
@@ -371,18 +306,9 @@ impl State {
                 virtual_keycode: Some(key),
                 state,
                 ..
-            }) => {
-                self.camera_controller.process_keyboard(*key, *state)
-            },
+            }) => self.camera_controller.process_keyboard(*key, *state),
             DeviceEvent::MouseWheel { delta, .. } => {
                 self.camera_controller.process_scroll(delta);
-                true
-            }
-            DeviceEvent::Button {
-                button:0, // Left Mouse Button
-                state,
-            } => {
-                self.mouse_pressed = *state == ElementState::Pressed;
                 true
             }
             DeviceEvent::MouseMotion { delta } => {
@@ -398,6 +324,7 @@ impl State {
     fn update(&mut self, dt: std::time::Duration) {
         // UPDATED!
         self.camera_controller.update_camera(&mut self.camera, dt);
+        self.uniforms.increment_time((dt.as_millis() as f32)/1000.);
         self.uniforms
             .update_view_proj(&self.camera, &self.projection);
         self.queue.write_buffer(
@@ -405,18 +332,15 @@ impl State {
             0,
             bytemuck::cast_slice(&[self.uniforms]),
         );
-
-        //println!("{:?}",self.uniforms.view_proj);
-        //println!("{:?}",self.camera.position);
     }
 
-    fn render(&mut self) -> Result<(), wgpu::SwapChainError> {
-
-        let current = SystemTime::now();
-        let delta = current.duration_since(self.timestamp).unwrap().as_millis();
-        //println!("{:?} FPS", 1000/delta);
+    fn render(&mut self, dt: std::time::Duration) -> Result<(), wgpu::SwapChainError> {
 
         let frame = self.swap_chain.get_current_frame()?.output;
+
+        let group_size = Vector2::new(64,32);
+        let width_groups = lib::next_power_of_two(self.size.width / group_size.x);
+        let height_groups = lib::next_power_of_two(self.size.height / group_size.y);
 
         let mut encoder = self
             .device
@@ -428,9 +352,9 @@ impl State {
                 encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: None });
             c_pass.set_pipeline(&self.compute_pipeline);
             c_pass.set_bind_group(0, &self.comp_bind_group, &[]);
-            c_pass.set_bind_group(1, &self.uniform_bind_group,&[]);
+            c_pass.set_bind_group(1, &self.uniform_bind_group, &[]);
             c_pass.insert_debug_marker("compute stuff");
-            c_pass.dispatch(self.size.width, self.size.height, 1); // Number of cells to run, the (x,y,z) size of item being processed
+            c_pass.dispatch(width_groups, height_groups, 1); // Number of cells to run, the (x,y,z) size of item being processed
         }
 
         {
@@ -460,12 +384,9 @@ impl State {
 
         self.queue.submit(iter::once(encoder.finish()));
 
-        self.timestamp = current;
-
         Ok(())
     }
 }
-
 
 fn main() {
     env_logger::init();
@@ -509,6 +430,13 @@ fn main() {
                         }
                         _ => {}
                     },
+                    WindowEvent::MouseInput{
+                        state,
+                        button: MouseButton::Left,
+                        ..
+                    } => {
+                        global_state.mouse_pressed = *state == ElementState::Pressed;
+                    }
                     WindowEvent::Resized(physical_size) => {
                         global_state.resize(*physical_size);
                     }
@@ -523,7 +451,7 @@ fn main() {
                 let dt = now - last_render_time;
                 last_render_time = now;
                 global_state.update(dt);
-                match global_state.render() {
+                match global_state.render(dt) {
                     Ok(_) => {}
                     // Recreate the swap_chain if lost
                     Err(wgpu::SwapChainError::Lost) => global_state.resize(global_state.size),

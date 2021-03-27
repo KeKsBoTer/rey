@@ -1,179 +1,189 @@
 #version 450
 #define MIN_DISTANCE 0.001
-#define PI  3.14159265359
+#define PI 3.14159265359
 #define PI2 6.28318530717
 
-layout(local_size_x = 64) in;
+layout(local_size_x = 64, local_size_y = 32, local_size_z = 1) in;
 
-layout(std430, set=0, binding=0) buffer SrcBuffer {
-    float srcVertices[];
+layout(set = 0, binding = 0, rgba8) writeonly uniform image2D framebuffer;
+
+layout(set = 1, binding = 0) uniform Uniforms {
+  mat4 u_view_proj;
+  float time;
 };
 
-layout(set = 0, binding = 1, rgba8) writeonly uniform image2D dstImage;
+uint seed = 0;
 
-layout(set=1, binding=0) 
-uniform Uniforms {
-    mat4 u_view_proj;
-};
+void stepRNG() { seed = seed * 747796405 + 1; }
 
-float seed = 0.0;
-vec2 UV = vec2(0.0);
-
-
-// Helper functions.
+// Steps the RNG and returns a floating-point value between 0 and 1 inclusive.
 float random() {
-	return fract(sin(dot(UV, vec2(12.9898, 78.233)) + seed++) * 43758.5453);
+  // Condensed version of pcg_output_rxs_m_xs_32_32, with simple conversion to
+  // floating-point [0,1].
+  stepRNG();
+  uint word = ((seed >> ((seed >> 28) + 4)) ^ seed) * 277803737;
+  word = (word >> 22) ^ word;
+  return float(word) / 4294967295.0f;
 }
 
 vec3 randomUnitVector() {
-	float theta = random() * PI2;
-    float z = random() * 2.0 - 1.0;
-    float a = sqrt(1.0 - z * z);
-    vec3 vector = vec3(a * cos(theta), a * sin(theta), z);
-    return vector * sqrt(random());
+  return normalize(vec3(random(), random(), random()) * 2 - 1);
 }
 
-struct Ray{
-    vec3 orig;
-    vec3 dir;
-};
-
-Ray new_ray(vec3 orig, vec3 dir){
-    return Ray(orig,normalize(dir));
+vec3 diffuse_random() {
+  vec3 vec;
+  do {
+    vec = vec3(random(), random(), random()) * 2 - 1;
+  } while (dot(vec, vec) > 1);
+  return vec;
 }
 
-struct Intersection{
-    vec3 pos;
-    vec3 normal;
-    vec3 color;
-    float lambda;
+struct Ray {
+  vec3 orig;
+  vec3 dir;
 };
 
+Ray new_ray(vec3 orig, vec3 dir) { return Ray(orig, normalize(dir)); }
 
-struct Camera{
-    float focal_length;
-    float ratio;
+struct Intersection {
+  vec3 pos;
+  vec3 normal;
+  vec3 color;
+  float lambda;
 };
 
-Ray cast_ray_from_camera(Camera c,vec2 uv){
-    vec3 ray = vec3((uv.x-0.5)*c.ratio,-(uv.y-0.5),1);
-    ray = normalize(mat3(u_view_proj) * ray);
-    return Ray(
-        u_view_proj[3].xyz,
-        normalize(mat3(u_view_proj) * ray)
-    );
+struct Camera {
+  float focal_length;
+  float ratio;
+};
+
+Ray cast_ray_from_camera(Camera c, vec2 uv) {
+  vec3 ray =
+      normalize(vec3((uv.x - 0.5) * c.ratio, -(uv.y - 0.5), c.focal_length));
+  vec3 center = (u_view_proj * vec4(0, 0, 0, 1)).xyz;
+  return Ray(vec3(u_view_proj * vec4(0, 0, 0, 1)),
+             vec3(u_view_proj * vec4(ray, 1)) - center);
 }
 
-struct Sphere{
-    float radius;
-    vec3 center;
-    vec3 color;
+struct Sphere {
+  float radius;
+  vec3 center;
+  vec3 color;
 };
 
+float sphere_distance(Sphere s, Ray ray) {
+  vec3 d = ray.orig - s.center;
+  float vd = dot(ray.dir, d);
 
-float sphere_distance(Sphere s, Ray ray){
-    vec3 d = ray.orig - s.center;
-    float vd = dot(ray.dir,d);
+  float dd = dot(d, d); // length squared
 
-    float dd = dot(d,d); // length squared 
+  float r = s.radius;
 
-    float r = s.radius;
+  float a = vd * vd - dd + r * r;
+  if (a <= 0.) {
+    return -1;
+  }
+  float ss = sqrt(a);
+  float l1 = -vd + ss;
+  float l2 = -vd - ss;
 
-    float a = vd * vd - dd + r * r;
-    if(a<=0.){
-        return -1;
-    }    
-    float ss = sqrt(a);
-    float l1 = -vd + ss;
-    float l2 = -vd - ss;
+  if (l2 > MIN_DISTANCE) {
+    return l2;
+  } else if (l1 > MIN_DISTANCE) {
+    return l1;
+  } else {
+    return -1;
+  }
+}
 
-    if (l2 > MIN_DISTANCE){
-        return l2;
-    } else if (l1 > MIN_DISTANCE){
-        return l1;
-    } else {
-        return -1;
+Intersection sphere_intersection(Sphere s, Ray ray, float lambda) {
+  vec3 intersect = ray.orig + lambda * ray.dir;
+  vec3 normal = (intersect - s.center) / s.radius;
+
+  return Intersection(intersect, normal, s.color, lambda);
+}
+
+struct Ground {
+  float y;
+  vec3 color;
+};
+
+float ground_distance(Ground g, Ray ray) {
+  float l = (g.y - ray.orig.y) / ray.dir.y;
+  if (l < MIN_DISTANCE) {
+    return -1;
+  } else {
+    vec3 p = ray.orig + ray.dir * l;
+    if (abs(p.x) > 10 || abs(p.z) > 10) {
+      return -1;
     }
+    return l;
+  }
 }
 
-Intersection sphere_intersection(Sphere s, Ray ray, float lambda){
-    vec3 intersect = ray.orig + lambda * ray.dir;
-    vec3 normal = (intersect - s.center) / s.radius;
-
-    return Intersection(
-        intersect,
-        normal,
-        s.color,
-        lambda
-    );
+Intersection ground_intersection(Ground g, Ray ray, float lambda) {
+  return Intersection(ray.orig + ray.dir * lambda, vec3(0, 1, 0), g.color,
+                      lambda);
 }
 
-struct Ground{
-    float y;
-    vec3 color;
-};
+bool hitScene(Ray ray, inout Intersection i) {
+  float closest = 1.0 / 0.0; // aka. infinity
+  bool hitAny = false;
 
-float ground_distance(Ground g, Ray ray){
-    float l = (g.y - ray.orig.y) / ray.dir.y;
-    if(l < MIN_DISTANCE) {
-        return -1;
-    }else{
-        return l;
-    }
+  Sphere s = Sphere(1, vec3(0, sin(time) * 0.5 + 0.5, 0), vec3(1, 0, 0));
+
+  Ground g = Ground(-1, vec3(0, 1, 0));
+
+  float s_lambda = sphere_distance(s, ray);
+  float g_lambda = ground_distance(g, ray);
+
+  if (s_lambda >= 0) {
+    i = sphere_intersection(s, ray, s_lambda);
+    closest = i.lambda;
+    hitAny = true;
+  }
+  if (g_lambda >= 0 && closest > g_lambda) {
+    i = ground_intersection(g, ray, g_lambda);
+    hitAny = true;
+  }
+  return hitAny;
 }
-
-Intersection ground_intersection(Ground g, Ray ray, float lambda){
-    return Intersection(
-        ray.orig+ray.dir*lambda,
-        vec3(0,1,0),
-        g.color,
-        lambda
-    );
-}
-
-bool hitScene(Ray ray, inout Intersection i){
-    float closest = 1.0 / 0.0; // aka. infinity
-    bool hitAny = false;
-
-    Sphere s = Sphere(1,vec3(0,0,10),vec3(1,0,0));  
-
-    Ground g = Ground(-1,vec3(0,1,0));
-
-    float s_lambda = sphere_distance(s,ray);
-    float g_lambda = ground_distance(g,ray);
-
-    if(s_lambda >= 0){
-        i = sphere_intersection(s,ray,s_lambda);
-        closest = i.lambda;
-        hitAny = true;
-    }
-    if(g_lambda >= 0 && closest > g_lambda){
-        i = ground_intersection(g,ray,g_lambda);
-        hitAny = true;
-    }
-    return hitAny;
-}
-
 
 void main() {
-    vec2 size = vec2(gl_NumWorkGroups.xy);
-    vec2 xy = vec2(gl_GlobalInvocationID.xy);
+  vec2 pix = vec2(gl_GlobalInvocationID.xy);
+  vec2 size = vec2(imageSize(framebuffer));
 
-    seed = float(gl_GlobalInvocationID.x)/float(gl_GlobalInvocationID.y+1) + float(gl_LocalInvocationID.x)/float(gl_LocalInvocationID.y+1);
+  if (pix.x >= size.x || pix.y >= size.y) {
+    return;
+  }
 
-    vec3 sun_dir = randomUnitVector();
+  seed = uint(size.x) * uint(pix.y) + uint(pix.x);
 
+  Camera c = Camera(1, size.x / size.y);
 
-    Camera c = Camera(1,size.x/size.y);
+  vec4 colorOut = vec4(0, 0, 0, 1);
 
-    Ray ray = cast_ray_from_camera(c,xy/size);
+  vec3 sun_dir = normalize(vec3(1, 2, 1));
 
-    vec4 colorOut = vec4(.5,.5,1,1);
-    
+  int passes = 20;
+  int num_hits = 5;
+  for (int s = 0; s < passes; s++) {
+    Ray ray = cast_ray_from_camera(c, pix / size +
+                                          randomUnitVector().xy / (2 * size.x));
     Intersection i;
-    if(hitScene(ray,i)){
-        colorOut.rgb = i.color;
+    if (hitScene(ray, i)) {
+      vec3 c = i.color;
+      for (int j = 0; j < num_hits; j++) {
+        vec3 rnd = randomUnitVector();
+        if (hitScene(Ray(i.pos, normalize(i.normal + diffuse_random())), i)) {
+          c *= .2;
+        } else
+          break;
+      }
+      colorOut.rgb += c;
     }
+  }
 
-    imageStore(dstImage, ivec2(gl_GlobalInvocationID.xy), colorOut);//vec4((ray.dir+1)/2,1));
+  imageStore(framebuffer, ivec2(pix),
+             vec4(colorOut.rgb / passes, 1)); // vec4((ray.dir+1)/2,1));
 }
