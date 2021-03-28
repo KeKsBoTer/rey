@@ -18,7 +18,8 @@ mod pipeline;
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 struct Uniforms {
     view_proj: [[f32; 4]; 4],
-    time: f32
+    time: f32,
+    pass: u32
 }
 
 impl Uniforms {
@@ -26,11 +27,20 @@ impl Uniforms {
         Self {
             view_proj: cgmath::Matrix4::identity().into(),
             time:0.0,
+            pass: 0,
         }
     }
 
     fn increment_time(&mut self, dt:f32){
         self.time+=dt;
+    }
+
+    fn increment_pass(&mut self){
+        self.pass+=1;
+    }
+
+    fn reset_pass(&mut self){
+        self.pass = 0;
     }
 
     // UPDATED!
@@ -86,7 +96,7 @@ impl State {
             .request_device(
                 &wgpu::DeviceDescriptor {
                     label: None,
-                    features: wgpu::Features::empty(),
+                    features: wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES,
                     limits: wgpu::Limits::default(),
                 },
                 None, // Trace path
@@ -192,7 +202,7 @@ impl State {
                         binding: 0,
                         visibility: wgpu::ShaderStage::COMPUTE,
                         ty: wgpu::BindingType::StorageTexture {
-                            access: wgpu::StorageTextureAccess::WriteOnly,
+                            access: wgpu::StorageTextureAccess::ReadWrite,
                             /// Format of the texture.
                             format: wgpu::TextureFormat::Rgba8Unorm,
                             /// Dimension of the texture view that is going to be sampled.
@@ -295,6 +305,8 @@ impl State {
             }],
         });
 
+        self.uniforms.reset_pass();
+
         println!("{:} {:}", self.size.width, self.size.height);
     }
 
@@ -323,7 +335,11 @@ impl State {
 
     fn update(&mut self, dt: std::time::Duration) {
         // UPDATED!
+        let before = self.camera.calc_matrix();
         self.camera_controller.update_camera(&mut self.camera, dt);
+        if self.camera.calc_matrix()!= before {
+            self.uniforms.reset_pass();
+        }
         self.uniforms.increment_time((dt.as_millis() as f32)/1000.);
         self.uniforms
             .update_view_proj(&self.camera, &self.projection);
@@ -336,9 +352,11 @@ impl State {
 
     fn render(&mut self, dt: std::time::Duration) -> Result<(), wgpu::SwapChainError> {
 
+        println!("{:} FPS",1000/(dt.as_millis()+1));
+
         let frame = self.swap_chain.get_current_frame()?.output;
 
-        let group_size = Vector2::new(64,32);
+        let group_size = Vector2::new(32,16);
         let width_groups = lib::next_power_of_two(self.size.width / group_size.x);
         let height_groups = lib::next_power_of_two(self.size.height / group_size.y);
 
@@ -384,6 +402,8 @@ impl State {
 
         self.queue.submit(iter::once(encoder.finish()));
 
+        self.uniforms.increment_pass();
+
         Ok(())
     }
 }
@@ -399,16 +419,11 @@ fn main() {
     use futures::executor::block_on;
     let mut global_state = block_on(State::new(&window)); // NEW!
     let mut last_render_time = std::time::Instant::now();
+    let mut last_pos : (f64,f64) = (0.,0.);
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Poll;
         match event {
             Event::MainEventsCleared => window.request_redraw(),
-            Event::DeviceEvent {
-                ref event,
-                .. // We're not using device_id currently
-            } => {
-                global_state.input(event);
-            }
             // UPDATED!
             Event::WindowEvent {
                 ref event,
@@ -430,6 +445,13 @@ fn main() {
                         }
                         _ => {}
                     },
+                    WindowEvent::CursorMoved{
+                        position,
+                        ..
+                    } => {
+                        global_state.input(&DeviceEvent::MouseMotion{delta:(position.x-last_pos.0,position.y-last_pos.1)});
+                        last_pos = (position.x,position.y);
+                    }
                     WindowEvent::MouseInput{
                         state,
                         button: MouseButton::Left,
