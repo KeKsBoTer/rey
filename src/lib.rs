@@ -119,7 +119,7 @@ pub fn next_power_of_two(n: u32) -> u32 {
     return x;
 }
 
-pub fn create_texture<'a>(device: &'a wgpu::Device, width: u32, height: u32) -> wgpu::Texture {
+pub fn create_texture<'a>(device: &'a wgpu::Device, width: u32, height: u32, format: wgpu::TextureFormat) -> wgpu::Texture {
     return device.create_texture(&wgpu::TextureDescriptor {
         label: Some("Output Texture"),
         size: wgpu::Extent3d {
@@ -130,7 +130,7 @@ pub fn create_texture<'a>(device: &'a wgpu::Device, width: u32, height: u32) -> 
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::Rgba8Unorm,
+        format: format,
         usage: wgpu::TextureUsage::STORAGE,
     });
 }

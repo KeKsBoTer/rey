@@ -4,307 +4,316 @@
 #define PI2 6.28318530717
 #define MAX_DEPTH 5
 
-
 layout(local_size_x = 32, local_size_y = 16) in;
 
-layout(set = 0, binding = 0, rgba8) restrict uniform image2D framebuffer;
+layout(set = 0, binding = 0, rgba8) uniform image2D framebuffer;
 
 layout(set = 1, binding = 0) uniform Uniforms {
-  mat4 u_view_proj;
-  float time;
-  uint pass;
+    mat4 u_view_proj;
+    float time;
+    uint pass;
 };
 
 uint seed = 0;
 
 // Steps the RNG and returns a floating-point value between 0 and 1 inclusive.
 float random() {
-  // Condensed version of pcg_output_rxs_m_xs_32_32, with simple conversion to
-  // floating-point [0,1].
-  seed = seed * 747796405 + 1;
-  uint word = ((seed >> ((seed >> 28) + 4)) ^ seed) * 277803737;
-  word = (word >> 22) ^ word;
-  return float(word) / 4294967295.0f;
+    // Condensed version of pcg_output_rxs_m_xs_32_32, with simple conversion to
+    // floating-point [0,1].
+    seed = seed * 747796405 + 1;
+    uint word = ((seed >> ((seed >> 28) + 4)) ^ seed) * 277803737;
+    word = (word >> 22) ^ word;
+    return float(word) / 4294967295.0f;
 }
 
 vec3 randomUnitVector() {
-  return normalize(vec3(random(), random(), random()) * 2 - 1);
+    return normalize(vec3(random(), random(), random()) * 2 - 1);
 }
 
 struct Ray {
-  vec3 orig;
-  vec3 dir;
+    vec3 orig;
+    vec3 dir;
 };
 
-struct Material{
-  vec4 color;
+struct Material {
+    vec4 color;
 };
 
 struct Intersection {
-  vec3 pos;
-  vec3 normal;
-  Material material;
-  float lambda;
+    vec3 pos;
+    vec3 normal;
+    Material material;
+    float lambda;
 };
 
 struct Camera {
-  float focal_length;
-  float ratio;
+    float focal_length;
+    float ratio;
 };
 
 Ray cast_ray_from_camera(Camera c, vec2 uv) {
-  vec3 ray =
-      normalize(vec3((uv.x - 0.5) * c.ratio, -(uv.y - 0.5), c.focal_length));
-  vec3 center = (u_view_proj * vec4(0, 0, 0, 1)).xyz;
-  return Ray(vec3(u_view_proj * vec4(0, 0, 0, 1)),
-             vec3(u_view_proj * vec4(ray, 1)) - center);
+    vec3 ray =
+        normalize(vec3((uv.x - 0.5) * c.ratio, -(uv.y - 0.5), c.focal_length));
+    vec3 center = (u_view_proj * vec4(0, 0, 0, 1)).xyz;
+    return Ray(vec3(u_view_proj * vec4(0, 0, 0, 1)),
+               vec3(u_view_proj * vec4(ray, 1)) - center);
 }
 
 struct Sphere {
-  float radius;
-  vec3 center;
-  Material material;
+    float radius;
+    vec3 center;
+    Material material;
 };
 
 bool sphere_intersection(Sphere s, Ray ray, inout Intersection i) {
-  vec3 d = ray.orig - s.center;
-  float vd = dot(ray.dir, d);
+    vec3 d = ray.orig - s.center;
+    float vd = dot(ray.dir, d);
 
-  float dd = dot(d, d); // length squared
+    float dd = dot(d, d); // length squared
 
-  float r = s.radius;
+    float r = s.radius;
 
-  float a = vd * vd - dd + r * r;
-  if (a <= 0.) {
+    float a = vd * vd - dd + r * r;
+    if (a <= 0.) {
+        return false;
+    }
+    float ss = sqrt(a);
+    float l1 = -vd + ss;
+    float l2 = -vd - ss;
+
+    if (l2 > MIN_DISTANCE || l1 > MIN_DISTANCE) {
+        float l = min(l1, l2);
+        if (l > i.lambda)
+            return false;
+
+        i.lambda = l;
+        vec3 intersect = ray.orig + i.lambda * ray.dir;
+        vec3 normal = (intersect - s.center) / s.radius;
+
+        i.pos = intersect;
+        i.normal = normal;
+        i.material = s.material;
+        return true;
+    }
     return false;
-  }
-  float ss = sqrt(a);
-  float l1 = -vd + ss;
-  float l2 = -vd - ss;
-
-  if (l2 > MIN_DISTANCE || l1 > MIN_DISTANCE) {
-    float l = min(l1, l2);
-    if (l > i.lambda)
-      return false;
-
-    i.lambda = l;
-    vec3 intersect = ray.orig + i.lambda * ray.dir;
-    vec3 normal = (intersect - s.center) / s.radius;
-
-    i.pos = intersect;
-    i.normal = normal;
-    i.material = s.material;
-    return true;
-  }
-  return false;
 }
 
 struct Triangle {
-  vec3 points[3];
-  Material material;
+    vec3 points[3];
+    Material material;
 };
 
 float intersect(Ray ray, vec3 v01, vec3 v11, vec3 v21, vec3 v02, vec3 v12,
                 vec3 v22, vec3 v03, vec3 v13, vec3 v23, vec3 v04, vec3 v14,
                 vec3 v24, out int hit_index) {
 
-  vec3 e11 = v11 - v01;
-  vec3 e21 = v21 - v01;
-  vec3 e12 = v12 - v02;
-  vec3 e22 = v22 - v02;
-  vec3 e13 = v13 - v03;
-  vec3 e23 = v23 - v03;
-  vec3 e14 = v14 - v04;
-  vec3 e24 = v24 - v04;
-  vec4 v0x = vec4(v01.x, v02.x, v03.x, v04.x);
-  vec4 v0y = vec4(v01.y, v02.y, v03.y, v04.y);
-  vec4 v0z = vec4(v01.z, v02.z, v03.z, v04.z);
-  vec4 e1x = vec4(e11.x, e12.x, e13.x, e14.x);
-  vec4 e1y = vec4(e11.y, e12.y, e13.y, e14.y);
-  vec4 e1z = vec4(e11.z, e12.z, e13.z, e14.z);
-  vec4 e2x = vec4(e21.x, e22.x, e23.x, e24.x);
-  vec4 e2y = vec4(e21.y, e22.y, e23.y, e24.y);
-  vec4 e2z = vec4(e21.z, e22.z, e23.z, e24.z);
-  vec4 dir4x = ray.dir.xxxx;
-  vec4 dir4y = ray.dir.yyyy;
-  vec4 dir4z = ray.dir.zzzz;
-  vec4 pvecx = dir4y * e2z - dir4z * e2y;
-  vec4 pvecy = dir4z * e2x - dir4x * e2z;
-  vec4 pvecz = dir4x * e2y - dir4y * e2x;
-  vec4 divisor = pvecx * e1x + pvecy * e1y + pvecz * e1z;
-  vec4 invDivisor = vec4(1, 1, 1, 1) / divisor;
-  vec4 orig4x = ray.orig.xxxx;
-  vec4 orig4y = ray.orig.yyyy;
-  vec4 orig4z = ray.orig.zzzz;
-  vec4 tvecx = orig4x - v0x;
-  vec4 tvecy = orig4y - v0y;
-  vec4 tvecz = orig4z - v0z;
-  vec4 u4;
-  u4 = tvecx * pvecx + tvecy * pvecy + tvecz * pvecz;
-  u4 = u4 * invDivisor;
-  vec4 qvecx = tvecy * e1z - tvecz * e1y;
-  vec4 qvecy = tvecz * e1x - tvecx * e1z;
-  vec4 qvecz = tvecx * e1y - tvecy * e1x;
-  vec4 v4;
-  v4 = dir4x * qvecx + dir4y * qvecy + dir4z * qvecz;
-  v4 = v4 * invDivisor;
-  vec4 t4;
-  t4 = e2x * qvecx + e2y * qvecy + e2z * qvecz;
-  t4 = t4 * invDivisor;
-  float t = 1 / 0.;
-  if (t4.x < t && t4.x > MIN_DISTANCE)
-    if (u4.x >= 0 && v4.x >= 0 && u4.x + v4.x <= 1) {
-      t = t4.x;
-      hit_index = 0;
-    }
-  if (t4.y < t && t4.y > MIN_DISTANCE)
-    if (u4.y >= 0 && v4.y >= 0 && u4.y + v4.y <= 1) {
-      t = t4.y;
-      hit_index = 1;
-    }
-  if (t4.z < t && t4.z > MIN_DISTANCE)
-    if (u4.z >= 0 && v4.z >= 0 && u4.z + v4.z <= 1) {
-      t = t4.z;
-      hit_index = 2;
-    }
-  if (t4.w < t && t4.w > MIN_DISTANCE)
-    if (u4.w >= 0 && v4.w >= 0 && u4.w + v4.w <= 1) {
-      t = t4.w;
-      hit_index = 3;
-    }
-  return t;
+    vec3 e11 = v11 - v01;
+    vec3 e21 = v21 - v01;
+    vec3 e12 = v12 - v02;
+    vec3 e22 = v22 - v02;
+    vec3 e13 = v13 - v03;
+    vec3 e23 = v23 - v03;
+    vec3 e14 = v14 - v04;
+    vec3 e24 = v24 - v04;
+    vec4 v0x = vec4(v01.x, v02.x, v03.x, v04.x);
+    vec4 v0y = vec4(v01.y, v02.y, v03.y, v04.y);
+    vec4 v0z = vec4(v01.z, v02.z, v03.z, v04.z);
+    vec4 e1x = vec4(e11.x, e12.x, e13.x, e14.x);
+    vec4 e1y = vec4(e11.y, e12.y, e13.y, e14.y);
+    vec4 e1z = vec4(e11.z, e12.z, e13.z, e14.z);
+    vec4 e2x = vec4(e21.x, e22.x, e23.x, e24.x);
+    vec4 e2y = vec4(e21.y, e22.y, e23.y, e24.y);
+    vec4 e2z = vec4(e21.z, e22.z, e23.z, e24.z);
+    vec4 dir4x = ray.dir.xxxx;
+    vec4 dir4y = ray.dir.yyyy;
+    vec4 dir4z = ray.dir.zzzz;
+    vec4 pvecx = dir4y * e2z - dir4z * e2y;
+    vec4 pvecy = dir4z * e2x - dir4x * e2z;
+    vec4 pvecz = dir4x * e2y - dir4y * e2x;
+    vec4 divisor = pvecx * e1x + pvecy * e1y + pvecz * e1z;
+    vec4 invDivisor = vec4(1, 1, 1, 1) / divisor;
+    vec4 orig4x = ray.orig.xxxx;
+    vec4 orig4y = ray.orig.yyyy;
+    vec4 orig4z = ray.orig.zzzz;
+    vec4 tvecx = orig4x - v0x;
+    vec4 tvecy = orig4y - v0y;
+    vec4 tvecz = orig4z - v0z;
+    vec4 u4;
+    u4 = tvecx * pvecx + tvecy * pvecy + tvecz * pvecz;
+    u4 = u4 * invDivisor;
+    vec4 qvecx = tvecy * e1z - tvecz * e1y;
+    vec4 qvecy = tvecz * e1x - tvecx * e1z;
+    vec4 qvecz = tvecx * e1y - tvecy * e1x;
+    vec4 v4;
+    v4 = dir4x * qvecx + dir4y * qvecy + dir4z * qvecz;
+    v4 = v4 * invDivisor;
+    vec4 t4;
+    t4 = e2x * qvecx + e2y * qvecy + e2z * qvecz;
+    t4 = t4 * invDivisor;
+    float t = 1 / 0.;
+    if (t4.x < t && t4.x > MIN_DISTANCE)
+        if (u4.x >= 0 && v4.x >= 0 && u4.x + v4.x <= 1) {
+            t = t4.x;
+            hit_index = 0;
+        }
+    if (t4.y < t && t4.y > MIN_DISTANCE)
+        if (u4.y >= 0 && v4.y >= 0 && u4.y + v4.y <= 1) {
+            t = t4.y;
+            hit_index = 1;
+        }
+    if (t4.z < t && t4.z > MIN_DISTANCE)
+        if (u4.z >= 0 && v4.z >= 0 && u4.z + v4.z <= 1) {
+            t = t4.z;
+            hit_index = 2;
+        }
+    if (t4.w < t && t4.w > MIN_DISTANCE)
+        if (u4.w >= 0 && v4.w >= 0 && u4.w + v4.w <= 1) {
+            t = t4.w;
+            hit_index = 3;
+        }
+    return t;
 }
 
 bool quad_triangle_intersection(Ray ray, Triangle t[4], inout Intersection i) {
-  int hit_index = -1;
-  float lambda =
-      intersect(ray, t[0].points[0], t[0].points[1], t[0].points[2],
-                t[1].points[0], t[1].points[1], t[1].points[2], t[2].points[0],
-                t[2].points[1], t[2].points[2], t[3].points[0], t[3].points[1],
-                t[3].points[2], hit_index);
+    int hit_index = -1;
+    float lambda =
+        intersect(ray, t[0].points[0], t[0].points[1], t[0].points[2],
+                  t[1].points[0], t[1].points[1], t[1].points[2],
+                  t[2].points[0], t[2].points[1], t[2].points[2],
+                  t[3].points[0], t[3].points[1], t[3].points[2], hit_index);
 
-  if (lambda < i.lambda) {
-    vec3 normal =
-        normalize(cross(t[hit_index].points[1] - t[hit_index].points[0],
-                        t[hit_index].points[2] - t[hit_index].points[1]));
-    i.pos = ray.orig + ray.dir * lambda;
-    i.normal = normal;
-    i.material = t[hit_index].material;
+    if (lambda < i.lambda) {
+        vec3 normal =
+            normalize(cross(t[hit_index].points[1] - t[hit_index].points[0],
+                            t[hit_index].points[2] - t[hit_index].points[1]));
+        i.pos = ray.orig + ray.dir * lambda;
+        i.normal = normal;
+        i.material = t[hit_index].material;
 
-    i.lambda = lambda;
-    return true;
-  }
+        i.lambda = lambda;
+        return true;
+    }
 
-  return false;
+    return false;
 }
-
 
 const Triangle triangles[3][4] = {
     {// Bottom
      Triangle(vec3[3](vec3(-10, -1, -10), vec3(10, -1, 10), vec3(10, -1, -10)),
-              Material(vec4(1, 1, 1,0))),
+              Material(vec4(1, 1, 1, 0))),
      Triangle(vec3[3](vec3(-10, -1, -10), vec3(-10, -1, 10), vec3(10, -1, 10)),
-              Material(vec4(1, 1, 1,0))),
+              Material(vec4(1, 1, 1, 0))),
      // Left
      Triangle(vec3[3](vec3(-10, -1, -10), vec3(-10, 9, 10), vec3(-10, -1, 10)),
-              Material(vec4(1, .5, 1,0))),
+              Material(vec4(1, 0, 0, 0))),
      Triangle(vec3[3](vec3(-10, -1, -10), vec3(-10, 9, -10), vec3(-10, 9, 10)),
-              Material(vec4(1, .5, 1,0)))},
+              Material(vec4(1, 0, 0, 0)))},
     {// Right
      Triangle(vec3[3](vec3(10, -1, -10), vec3(10, -1, 10), vec3(10, 9, 10)),
-              Material(vec4(0.2, .2, 1,0))),
+              Material(vec4(0, 1, 0, 0))),
      Triangle(vec3[3](vec3(10, -1, -10), vec3(10, 9, 10), vec3(10, 9, -10)),
-              Material(vec4(0.2, 0.2, 1,0))),
+              Material(vec4(0, 1, 0, 0))),
      // Back
      Triangle(vec3[3](vec3(-10, -1, 10), vec3(10, 9, 10), vec3(10, -1, 10)),
-              Material(vec4(1, 1, 1,0))),
+              Material(vec4(1, 1, 1, 0))),
      Triangle(vec3[3](vec3(-10, -1, 10), vec3(-10, 9, 10), vec3(10, 9, 10)),
-              Material(vec4(1, 1, 1,0)))},
+              Material(vec4(1, 1, 1, 0)))},
     {// Top
      Triangle(vec3[3](vec3(-10, 9, -10), vec3(10, 9, -10), vec3(10, 9, 10)),
-              Material(vec4(1, 1, 1,0))),
+              Material(vec4(1, 1, 1, 0))),
      Triangle(vec3[3](vec3(-10, 9, -10), vec3(10, 9, 10), vec3(-10, 9, 10)),
-              Material(vec4(1, 1, 1,0))),
+              Material(vec4(1, 1, 1, 0))),
      // Front
      Triangle(
          vec3[3](vec3(-10, -1, -100), vec3(10, -1, -100), vec3(10, 9, -100)),
-         Material(vec4(1, 1, 1,0))),
+         Material(vec4(1, 1, 1, 0))),
      Triangle(
          vec3[3](vec3(-10, -1, -100), vec3(10, 9, -100), vec3(-10, 9, -100)),
-         Material(vec4(1, 1, 1,0)))}};
+         Material(vec4(1, 1, 1, 0)))}};
 
-const Sphere spheres[] = {
-  Sphere(1, vec3(0, 1, 0), Material(vec4(1, 0, 0, 0))),
-  Sphere(1, vec3(0, 9, 0), Material(vec4(10)))
-};
+const Sphere spheres[] = {Sphere(2, vec3(0, 1, 0), Material(vec4(0.7,0.7,0.7, 0))),
+                          Sphere(1, vec3(0, 7, 0), Material(vec4(5)))};
 
 bool hitScene(Ray ray, out Intersection i) {
+    bool anyHit = false;
 
-  bool anyHit = false;
+    i.lambda = 1 / .0; // aka. infinity
+    for (int s = 0; s < spheres.length(); s++)
+        anyHit = sphere_intersection(spheres[s], ray, i) || anyHit;
 
-  i.lambda = 1 / .0; // aka. infinity
-  for(int s=0;s<spheres.length();s++)
-    anyHit = sphere_intersection(spheres[s], ray, i) || anyHit;
-
-  // Triangle invisible_t = invisible(ray);
-  int num_triangles = triangles.length();
-  for (int t = 0; t < num_triangles; t += 1) {
-    anyHit = quad_triangle_intersection(ray, triangles[t], i) || anyHit;
-  }
-  return anyHit;
+    // Triangle invisible_t = invisible(ray);
+    int num_triangles = triangles.length();
+    for (int t = 0; t < num_triangles; t += 1) {
+        anyHit = quad_triangle_intersection(ray, triangles[t], i) || anyHit;
+    }
+    return anyHit;
 }
 
 vec3 jitter(vec3 d, float phi, float sina, float cosa) {
-	vec3 w = normalize(d), u = normalize(cross(w.yzx, w)), v = cross(w, u);
-	return (u*cos(phi) + v*sin(phi)) * sina + w * cosa;
+    vec3 w = normalize(d), u = normalize(cross(w.yzx, w)), v = cross(w, u);
+    return (u * cos(phi) + v * sin(phi)) * sina + w * cosa;
 }
 
-
 void main() {
-  vec2 pix = vec2(gl_GlobalInvocationID.xy);
-  vec2 size = vec2(imageSize(framebuffer));
+    vec2 pix = vec2(gl_GlobalInvocationID.xy);
+    vec2 size = vec2(imageSize(framebuffer));
 
-  seed = (uint(size.x) * uint(pix.y) + uint(pix.x)) * (pass * uint(time*1000)+1);
+    seed = (uint(size.x) * uint(pix.y) + uint(pix.x)) *
+           (pass * uint(time * 1000) + 1);
 
-  // if pix is outside of framebuffer just pick a random pixel and compute an
-  // extra pass for it
-  bool outside = pix.x >= size.x || pix.y >= size.y;
-  if (outside) {
-    return;
-  }
+    // if pix is outside of framebuffer just pick a random pixel and compute an
+    // extra pass for it
+    bool outside = pix.x >= size.x || pix.y >= size.y;
+    if (outside) {
+        return;
+    }
 
-  Camera c = Camera(1, size.x / size.y);
+    Camera c = Camera(1, size.x / size.y);
 
-  vec3 colorOut = vec3(0, 0, 0);
+    vec3 colorOut = vec3(0, 0, 0);
 
-  vec3 sun_dir = normalize(vec3(0, 0, -1));
+    vec3 sun_dir = normalize(vec3(0, 0, -1));
 
-  int passes = 2;
-  for (int s = 0; s < passes; s++) {
     vec3 rnd = randomUnitVector();
     Ray ray = cast_ray_from_camera(c, pix / size + rnd.xy / (2 * size.x));
-    Intersection i;
-    vec3 color = vec3(0);
-	  vec3 mask = vec3(1);
-    for (int depth = 0;depth <= MAX_DEPTH; depth++) {
-      if(!hitScene(ray, i))
-        break;
+    
+	Intersection i;
+    Intersection i2;
+    
+	vec3 color = vec3(0);
+    vec3 mask = vec3(1);
+    for (int hits = 0; hits <= MAX_DEPTH; hits++) {
+        if (!hitScene(ray, i))
+            break;
 
-      float r2 = random();
-      vec3 d = jitter(i.normal, 2.*PI*random(), sqrt(r2), sqrt(1. - r2));
-      color += mask * i.material.color.a;
-      mask *= i.material.color.rgb;
-      ray = Ray(i.pos, d);
+        float r2 = random();
+        vec3 d = jitter(i.normal, 2. * PI * random(), sqrt(r2), sqrt(1. - r2));
+
+		// calc incomming light
+        mask *= i.material.color.rgb;
+
+        ray = Ray(i.pos, d);
+
+		Sphere lightSphere = spheres[1];
+		vec3 lightRay = (lightSphere.center)-i.pos;
+		vec3 lightDir = normalize(lightRay);
+		// TODO add max distance param to hitScene inorder to make light check easier
+		hitScene(Ray(i.pos,lightDir),i2);
+		if(abs(i2.lambda - length(lightRay)+lightSphere.radius)<=MIN_DISTANCE){
+
+			float cos_a_max = sqrt(1 - clamp(lightSphere.radius * lightSphere.radius/(i2.lambda*i2.lambda),0,1));
+			float weight = 2 * (1 - cos_a_max);
+			// calc next event estimation
+        	color += (mask * i2.material.color.a) * (weight * clamp(dot( lightDir, i.normal ), 0., 1.));
+		}
+
     }
-    colorOut += color;
-  }
+    colorOut = color;
 
-  colorOut /= passes;
+    if (pass > 0) {
+        vec3 lastColor = imageLoad(framebuffer, ivec2(pix)).rgb;
+        colorOut = mix(lastColor, colorOut, 1.0 / (pass + 1));
+    }
 
-  if (pass > 0) {
-    vec3 lastColor = imageLoad(framebuffer, ivec2(pix)).rgb;
-    colorOut = mix(lastColor,colorOut,1.0/(pass + 1));
-  }
-
-  imageStore(framebuffer, ivec2(pix), vec4(colorOut, 1));
+    imageStore(framebuffer, ivec2(pix), vec4(colorOut, 1));
 }

@@ -209,7 +209,7 @@ impl State {
                             view_dimension: wgpu::TextureViewDimension::D2,
                         },
                         count: None,
-                    },
+                    }
                 ],
             });
 
@@ -220,8 +220,8 @@ impl State {
             Some("ComputePipeline"),
         );
 
-        let out_texture = lib::create_texture(&device,size.width,size.height);
-        let view = out_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let frame_buffer = lib::create_texture(&device,size.width,size.height,wgpu::TextureFormat::Rgba8Unorm);
+        let frame_buffer_view = frame_buffer.create_view(&wgpu::TextureViewDescriptor::default());
 
         // Instantiates the bind group, once again specifying the binding of buffers.
         let comp_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -230,8 +230,8 @@ impl State {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&view),
-                },
+                    resource: wgpu::BindingResource::TextureView(&frame_buffer_view),
+                }
             ],
         });
 
@@ -241,7 +241,7 @@ impl State {
             layout: &render_bind_layout,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
-                resource: wgpu::BindingResource::TextureView(&view),
+                resource: wgpu::BindingResource::TextureView(&frame_buffer_view),
             }],
         });
 
@@ -281,8 +281,9 @@ impl State {
         self.swap_chain = self.device.create_swap_chain(&self.surface, &self.sc_desc);
         self.projection.resize(self.size.width, self.size.height);
 
-        let out_texture = lib::create_texture(&self.device,self.size.width,self.size.height);
-        let view = out_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let frame_buffer = lib::create_texture(&self.device,self.size.width,self.size.height,wgpu::TextureFormat::Rgba8Unorm);
+        let frame_buffer_view = frame_buffer.create_view(&wgpu::TextureViewDescriptor::default());
 
         // Instantiates the bind group, once again specifying the binding of buffers.
         self.comp_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -291,8 +292,8 @@ impl State {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&view),
-                },
+                    resource: wgpu::BindingResource::TextureView(&frame_buffer_view),
+                }
             ],
         });
 
@@ -301,7 +302,7 @@ impl State {
             layout: &self.render_bind_layout,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
-                resource: wgpu::BindingResource::TextureView(&view),
+                resource: wgpu::BindingResource::TextureView(&frame_buffer_view),
             }],
         });
 
@@ -352,7 +353,7 @@ impl State {
 
     fn render(&mut self, dt: std::time::Duration) -> Result<(), wgpu::SwapChainError> {
 
-        println!("{:} FPS",1000/(dt.as_millis()+1));
+        //println!("{:} FPS",1000/(dt.as_millis()+1));
 
         let frame = self.swap_chain.get_current_frame()?.output;
 

@@ -1,0 +1,21 @@
+{
+    "cSpell.words": [
+        "Rgba",
+        "Unorm",
+        "Vulkan",
+        "Zeroable",
+        "bytemuck",
+        "cgmath",
+        "repr",
+        "spirv",
+        "wgpu",
+        "winit"
+    ],
+    "files.watcherExclude": {
+        "target/**":true,
+    },
+    "editor.tabSize":4,
+    "editor.insertSpaces": false,
+    "editor.detectIndentation": false,
+    "clang-format.style": "{BasedOnStyle: llvm, IndentWidth: 4}",
+}
