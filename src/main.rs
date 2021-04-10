@@ -1,7 +1,7 @@
 use core::f32;
 use std::iter;
 
-use cgmath::{Vector2, prelude::*};
+use cgmath::{prelude::*, Vector2};
 
 use wgpu::util::DeviceExt;
 use winit::{
@@ -19,27 +19,27 @@ mod pipeline;
 struct Uniforms {
     view_proj: [[f32; 4]; 4],
     time: f32,
-    pass: u32
+    pass: u32,
 }
 
 impl Uniforms {
     fn new() -> Self {
         Self {
             view_proj: cgmath::Matrix4::identity().into(),
-            time:0.0,
+            time: 0.0,
             pass: 0,
         }
     }
 
-    fn increment_time(&mut self, dt:f32){
-        self.time+=dt;
+    fn increment_time(&mut self, dt: f32) {
+        self.time += dt;
     }
 
-    fn increment_pass(&mut self){
-        self.pass+=1;
+    fn increment_pass(&mut self) {
+        self.pass += 1;
     }
 
-    fn reset_pass(&mut self){
+    fn reset_pass(&mut self) {
         self.pass = 0;
     }
 
@@ -50,7 +50,6 @@ impl Uniforms {
 }
 
 struct State {
-
     camera: camera::Camera,
     projection: camera::Projection,
     camera_controller: camera::CameraController,
@@ -164,7 +163,7 @@ impl State {
                     ty: wgpu::BindingType::StorageTexture {
                         access: wgpu::StorageTextureAccess::ReadOnly,
                         /// Format of the texture.
-                        format: wgpu::TextureFormat::Rgba8Unorm,
+                        format: wgpu::TextureFormat::Rgba16Float,
                         /// Dimension of the texture view that is going to be sampled.
                         view_dimension: wgpu::TextureViewDimension::D2,
                     },
@@ -197,20 +196,18 @@ impl State {
         let compute_bind_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("Compute Binder"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStage::COMPUTE,
-                        ty: wgpu::BindingType::StorageTexture {
-                            access: wgpu::StorageTextureAccess::ReadWrite,
-                            /// Format of the texture.
-                            format: wgpu::TextureFormat::Rgba8Unorm,
-                            /// Dimension of the texture view that is going to be sampled.
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                        },
-                        count: None,
-                    }
-                ],
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStage::COMPUTE,
+                    ty: wgpu::BindingType::StorageTexture {
+                        access: wgpu::StorageTextureAccess::ReadWrite,
+                        /// Format of the texture.
+                        format: wgpu::TextureFormat::Rgba16Float,
+                        /// Dimension of the texture view that is going to be sampled.
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                    },
+                    count: None,
+                }],
             });
 
         let compute_pipeline = pipeline::create_compute_pipeline(
@@ -220,19 +217,22 @@ impl State {
             Some("ComputePipeline"),
         );
 
-        let frame_buffer = lib::create_texture(&device,size.width,size.height,wgpu::TextureFormat::Rgba8Unorm);
+        let frame_buffer = lib::create_texture(
+            &device,
+            size.width,
+            size.height,
+            wgpu::TextureFormat::Rgba16Float,
+        );
         let frame_buffer_view = frame_buffer.create_view(&wgpu::TextureViewDescriptor::default());
 
         // Instantiates the bind group, once again specifying the binding of buffers.
         let comp_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None,
             layout: &compute_bind_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&frame_buffer_view),
-                }
-            ],
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&frame_buffer_view),
+            }],
         });
 
         // Instantiates the bind group, once again specifying the binding of buffers.
@@ -281,20 +281,22 @@ impl State {
         self.swap_chain = self.device.create_swap_chain(&self.surface, &self.sc_desc);
         self.projection.resize(self.size.width, self.size.height);
 
-
-        let frame_buffer = lib::create_texture(&self.device,self.size.width,self.size.height,wgpu::TextureFormat::Rgba8Unorm);
+        let frame_buffer = lib::create_texture(
+            &self.device,
+            self.size.width,
+            self.size.height,
+            wgpu::TextureFormat::Rgba16Float,
+        );
         let frame_buffer_view = frame_buffer.create_view(&wgpu::TextureViewDescriptor::default());
 
         // Instantiates the bind group, once again specifying the binding of buffers.
         self.comp_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None,
             layout: &self.compute_bind_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&frame_buffer_view),
-                }
-            ],
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&frame_buffer_view),
+            }],
         });
 
         self.render_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -338,10 +340,11 @@ impl State {
         // UPDATED!
         let before = self.camera.calc_matrix();
         self.camera_controller.update_camera(&mut self.camera, dt);
-        if self.camera.calc_matrix()!= before {
+        if self.camera.calc_matrix() != before {
             self.uniforms.reset_pass();
         }
-        self.uniforms.increment_time((dt.as_millis() as f32)/1000.);
+        self.uniforms
+            .increment_time((dt.as_millis() as f32) / 1000.);
         self.uniforms
             .update_view_proj(&self.camera, &self.projection);
         self.queue.write_buffer(
@@ -352,12 +355,11 @@ impl State {
     }
 
     fn render(&mut self, dt: std::time::Duration) -> Result<(), wgpu::SwapChainError> {
-
         //println!("{:} FPS",1000/(dt.as_millis()+1));
 
         let frame = self.swap_chain.get_current_frame()?.output;
 
-        let group_size = Vector2::new(32,16);
+        let group_size = Vector2::new(32, 16);
         let width_groups = lib::next_power_of_two(self.size.width / group_size.x);
         let height_groups = lib::next_power_of_two(self.size.height / group_size.y);
 
@@ -420,7 +422,7 @@ fn main() {
     use futures::executor::block_on;
     let mut global_state = block_on(State::new(&window)); // NEW!
     let mut last_render_time = std::time::Instant::now();
-    let mut last_pos : (f64,f64) = (0.,0.);
+    let mut last_pos: (f64, f64) = (0., 0.);
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Poll;
         match event {
@@ -429,46 +431,43 @@ fn main() {
             Event::WindowEvent {
                 ref event,
                 window_id,
-            } if window_id == window.id() => {
-                match event {
-                    WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
-                    WindowEvent::Destroyed => *control_flow = ControlFlow::Exit,
-                    WindowEvent::KeyboardInput { input, .. } => match input {
-                        KeyboardInput {
-                            state: ElementState::Pressed,
-                            virtual_keycode: Some(VirtualKeyCode::Escape),
-                            ..
-                        } => {
-                            *control_flow = ControlFlow::Exit;
-                        }
-                        keyboard_input => {
-                            global_state.input(&DeviceEvent::Key(*keyboard_input));
-                        }
-                        _ => {}
-                    },
-                    WindowEvent::CursorMoved{
-                        position,
+            } if window_id == window.id() => match event {
+                WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
+                WindowEvent::Destroyed => *control_flow = ControlFlow::Exit,
+                WindowEvent::KeyboardInput { input, .. } => match input {
+                    KeyboardInput {
+                        state: ElementState::Pressed,
+                        virtual_keycode: Some(VirtualKeyCode::Escape),
                         ..
                     } => {
-                        global_state.input(&DeviceEvent::MouseMotion{delta:(position.x-last_pos.0,position.y-last_pos.1)});
-                        last_pos = (position.x,position.y);
+                        *control_flow = ControlFlow::Exit;
                     }
-                    WindowEvent::MouseInput{
-                        state,
-                        button: MouseButton::Left,
-                        ..
-                    } => {
-                        global_state.mouse_pressed = *state == ElementState::Pressed;
-                    }
-                    WindowEvent::Resized(physical_size) => {
-                        global_state.resize(*physical_size);
-                    }
-                    WindowEvent::ScaleFactorChanged { new_inner_size, .. } => {
-                        global_state.resize(**new_inner_size);
+                    keyboard_input => {
+                        global_state.input(&DeviceEvent::Key(*keyboard_input));
                     }
                     _ => {}
+                },
+                WindowEvent::CursorMoved { position, .. } => {
+                    global_state.input(&DeviceEvent::MouseMotion {
+                        delta: (position.x - last_pos.0, position.y - last_pos.1),
+                    });
+                    last_pos = (position.x, position.y);
                 }
-            }
+                WindowEvent::MouseInput {
+                    state,
+                    button: MouseButton::Left,
+                    ..
+                } => {
+                    global_state.mouse_pressed = *state == ElementState::Pressed;
+                }
+                WindowEvent::Resized(physical_size) => {
+                    global_state.resize(*physical_size);
+                }
+                WindowEvent::ScaleFactorChanged { new_inner_size, .. } => {
+                    global_state.resize(**new_inner_size);
+                }
+                _ => {}
+            },
             Event::RedrawRequested(_) => {
                 let now = std::time::Instant::now();
                 let dt = now - last_render_time;
