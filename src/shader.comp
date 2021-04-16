@@ -6,7 +6,7 @@
 
 layout(local_size_x = 32, local_size_y = 16) in;
 
-layout(set = 0, binding = 0, rgba16) uniform image2D framebuffer;
+layout(set = 0, binding = 0, rgba16f) volatile uniform image2D framebuffer;
 
 layout(set = 1, binding = 0) uniform Uniforms {
     mat4 u_view_proj;
@@ -318,8 +318,7 @@ void main() {
     vec2 pix = vec2(gl_GlobalInvocationID.xy);
     vec2 size = vec2(imageSize(framebuffer));
 
-    seed = (uint(size.x) * uint(pix.y) + uint(pix.x)) * (pass + 1) *
-           int(time * 1000);
+    seed = (uint(size.x) * uint(pix.y) + uint(pix.x)) * (pass + 1);
 
     // if pix is outside of framebuffer just pick a random pixel and compute an
     // extra pass for it
@@ -339,9 +338,9 @@ void main() {
     vec3 colorOut = lightColor(ray);
 
     // mix with color of last frame
-    vec3 lastColor = imageLoad(framebuffer, ivec2(pix)).rgb;
-    float factor = 1.0 / min(pass + 1, 200);
-    colorOut = mix(lastColor, colorOut, factor);
+    // vec3 lastColor = imageLoad(framebuffer, ivec2(pix)).rgb;
+    // float factor = 1.0 / min(pass + 1, 200);
+    // colorOut = mix(lastColor, colorOut, factor);
 
     imageStore(framebuffer, ivec2(pix), vec4(colorOut, 1));
 }

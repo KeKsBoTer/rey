@@ -4,7 +4,7 @@
 layout(location = 0) in vec2 v_tex_coords;
 layout(location = 0) out vec4 f_color;
 
-layout(set = 0, binding = 0, rgba16) readonly uniform image2D t_image;
+layout(set = 0, binding = 0, rgba16f) readonly uniform image2D t_image;
 
 vec3 lessThan(vec3 f, float value) {
     return vec3((f.x < value) ? 1.0f : 0.0f, (f.y < value) ? 1.0f : 0.0f,

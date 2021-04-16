@@ -66,6 +66,8 @@ struct State {
     render_pipeline: wgpu::RenderPipeline,
     compute_pipeline: wgpu::ComputePipeline,
 
+    frame_buffer: wgpu::Texture,
+
     vertex_buffer: wgpu::Buffer,
     render_bind_group: wgpu::BindGroup,
 
@@ -262,6 +264,8 @@ impl State {
             render_pipeline,
             compute_pipeline,
 
+            frame_buffer,
+
             vertex_buffer,
             render_bind_group,
 
@@ -281,13 +285,17 @@ impl State {
         self.swap_chain = self.device.create_swap_chain(&self.surface, &self.sc_desc);
         self.projection.resize(self.size.width, self.size.height);
 
-        let frame_buffer = lib::create_texture(
+        self.frame_buffer.destroy();
+
+        self.frame_buffer = lib::create_texture(
             &self.device,
             self.size.width,
             self.size.height,
             wgpu::TextureFormat::Rgba16Float,
         );
-        let frame_buffer_view = frame_buffer.create_view(&wgpu::TextureViewDescriptor::default());
+        let frame_buffer_view = self
+            .frame_buffer
+            .create_view(&wgpu::TextureViewDescriptor::default());
 
         // Instantiates the bind group, once again specifying the binding of buffers.
         self.comp_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -385,12 +393,7 @@ impl State {
                     attachment: &frame.view,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.0,
-                            g: 0.0,
-                            b: 0.0,
-                            a: 1.0,
-                        }),
+                        load: wgpu::LoadOp::Load,
                         store: true,
                     },
                 }],
