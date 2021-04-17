@@ -79,9 +79,7 @@ struct State {
 
 impl State {
     async fn new(window: &Window) -> Self {
-        let mut size = window.inner_size();
-		size.width/=4;
-		size.height/=4;
+        let size = window.inner_size();
 
         // The instance is a handle to our GPU
         let instance = wgpu::Instance::new(wgpu::BackendBit::PRIMARY);
@@ -234,7 +232,7 @@ impl State {
             Some("ComputePipeline"),
         );
 
-        let frame_buffer = lib::FrameBuffer::new(size.width, size.height, &device);
+        let frame_buffer = lib::FrameBuffer::new(size.width, size.height, &device, &queue);
 
         let (fb_src_view, fb_dst_view) = frame_buffer.create_views();
 
@@ -296,16 +294,17 @@ impl State {
     }
 
     fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
-        self.size = winit::dpi::PhysicalSize::new(new_size.width/4,new_size.height/4);
+        self.size = new_size;
         self.sc_desc.width = self.size.width;
         self.sc_desc.height = self.size.height;
         self.swap_chain = self.device.create_swap_chain(&self.surface, &self.sc_desc);
         self.projection.resize(self.size.width, self.size.height);
 
         self.frame_buffer
-            .resize(self.size.width, self.size.height, &self.device);
+            .resize(self.size.width, self.size.height, &self.device, &self.queue);
 
         let (fb_src_view, fb_dst_view) = self.frame_buffer.create_views();
+
         // Instantiates the bind group, once again specifying the binding of buffers.
         self.comp_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None,
@@ -379,7 +378,6 @@ impl State {
 
     fn render(&mut self, dt: std::time::Duration) -> Result<(), wgpu::SwapChainError> {
         //println!("{:} FPS",1000/(dt.as_millis()+1));
-
         let frame = self.swap_chain.get_current_frame()?.output;
 
         let group_size = Vector2::new(32, 16);
@@ -392,24 +390,6 @@ impl State {
                 label: Some("Render Encoder"),
             });
 
-        // copy last frame to (currently in dst buffer) to src buffer
-        encoder.copy_texture_to_texture(
-            wgpu::TextureCopyView {
-                texture: &self.frame_buffer.dst,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-            },
-            wgpu::TextureCopyView {
-                texture: &self.frame_buffer.src,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-            },
-            wgpu::Extent3d {
-                width: self.frame_buffer.width,
-                height: self.frame_buffer.height,
-                depth: 1,
-            },
-        );
         {
             let mut c_pass =
                 encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: None });
@@ -417,6 +397,7 @@ impl State {
             c_pass.set_bind_group(0, &self.comp_bind_group, &[]);
             c_pass.set_bind_group(1, &self.uniform_bind_group, &[]);
             c_pass.insert_debug_marker("compute stuff");
+            // TODO use dispatch_indirect
             c_pass.dispatch(width_groups, height_groups, 1); // Number of cells to run, the (x,y,z) size of item being processed
         }
 
@@ -437,8 +418,28 @@ impl State {
             render_pass.set_pipeline(&self.render_pipeline);
             render_pass.set_bind_group(0, &self.render_bind_group, &[]);
             render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+            // TODO use draw_indirect
             render_pass.draw(0..lib::VERTICES.len() as u32, 0..1);
         }
+
+        // copy last frame to (currently in dst buffer) to src buffer
+        encoder.copy_texture_to_texture(
+            wgpu::TextureCopyView {
+                texture: &self.frame_buffer.dst,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+            },
+            wgpu::TextureCopyView {
+                texture: &self.frame_buffer.src,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+            },
+            wgpu::Extent3d {
+                width: self.frame_buffer.width,
+                height: self.frame_buffer.height,
+                depth: 1,
+            },
+        );
 
         self.queue.submit(iter::once(encoder.finish()));
 

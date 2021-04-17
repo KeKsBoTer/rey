@@ -1,4 +1,4 @@
-use wgpu::Texture;
+use wgpu::{util::DeviceExt, Texture};
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
@@ -64,7 +64,7 @@ impl StorageTexture {
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm,
+            format: wgpu::TextureFormat::Rgba16Float,
             usage: wgpu::TextureUsage::STORAGE | wgpu::TextureUsage::COPY_DST,
         });
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -84,7 +84,7 @@ impl StorageTexture {
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm,
+            format: wgpu::TextureFormat::Rgba16Float,
             usage: wgpu::TextureUsage::STORAGE | wgpu::TextureUsage::COPY_DST,
         });
         self.view = self
@@ -131,6 +131,35 @@ pub fn create_texture<'a>(
     });
 }
 
+pub fn create_empty_texture<'a>(
+    device: &'a wgpu::Device,
+    queue: &wgpu::Queue,
+    width: u32,
+    height: u32,
+    format: wgpu::TextureFormat,
+    usage: wgpu::TextureUsage,
+) -> wgpu::Texture {
+    let data = vec![0u8; (width * height * (format.describe().block_size as u32)) as usize];
+    let d = data.as_slice();
+    return device.create_texture_with_data(
+        queue,
+        &wgpu::TextureDescriptor {
+            label: Some("Output Texture"),
+            size: wgpu::Extent3d {
+                width: width,
+                height: height,
+                depth: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: format,
+            usage: wgpu::TextureUsage::STORAGE | usage,
+        },
+        d,
+    );
+}
+
 pub struct FrameBuffer {
     pub src: wgpu::Texture,
     pub dst: wgpu::Texture,
@@ -139,8 +168,8 @@ pub struct FrameBuffer {
 }
 
 impl FrameBuffer {
-    pub fn new(width: u32, height: u32, device: &wgpu::Device) -> Self {
-        let (src, dst) = create_frame_buffer_textures(width, height, device);
+    pub fn new(width: u32, height: u32, device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
+        let (src, dst) = create_frame_buffer_textures(width, height, device, queue);
         Self {
             src,
             dst,
@@ -149,10 +178,10 @@ impl FrameBuffer {
         }
     }
 
-    pub fn resize(&mut self, width: u32, height: u32, device: &wgpu::Device) {
+    pub fn resize(&mut self, width: u32, height: u32, device: &wgpu::Device, queue: &wgpu::Queue) {
         self.src.destroy();
         self.dst.destroy();
-        let (src, dst) = create_frame_buffer_textures(width, height, device);
+        let (src, dst) = create_frame_buffer_textures(width, height, device, queue);
         self.src = src;
         self.dst = dst;
         self.width = width;
@@ -174,9 +203,11 @@ fn create_frame_buffer_textures(
     width: u32,
     height: u32,
     device: &wgpu::Device,
+    queue: &wgpu::Queue,
 ) -> (Texture, Texture) {
-    let src = create_texture(
+    let src = create_empty_texture(
         device,
+        queue,
         width,
         height,
         wgpu::TextureFormat::Rgba16Float,

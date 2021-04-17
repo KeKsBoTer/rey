@@ -288,8 +288,11 @@ vec3 lightColor(Ray ray) {
 
         specularBounce = false;
 
+        float c = dot(i.normal, ray.dir) >= 0 ? -1 : 1;
+
         float r2 = random();
-        vec3 d = jitter(i.normal, 2. * PI * random(), sqrt(r2), sqrt(1. - r2));
+        vec3 d =
+            jitter(c * i.normal, 2. * PI * random(), sqrt(r2), sqrt(1. - r2));
 
         // calc incomming light
         mask *= i.material.color.rgb;
@@ -299,6 +302,10 @@ vec3 lightColor(Ray ray) {
 
         vec3 lightRay = (light.center) - i.pos;
         vec3 lightDir = normalize(lightRay);
+
+        if (dot(-lightDir, c * i.normal) >= 0) {
+            continue;
+        }
         // TODO add max distance param to hitScene inorder to make light check
         // easier
         hitScene(Ray(i.pos, lightDir), i2);
