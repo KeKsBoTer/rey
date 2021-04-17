@@ -6,7 +6,8 @@
 
 layout(local_size_x = 32, local_size_y = 16) in;
 
-layout(set = 0, binding = 0, rgba16f) volatile uniform image2D framebuffer;
+layout(set = 0, binding = 0, rgba16f) readonly uniform image2D framebuffer_src;
+layout(set = 0, binding = 1, rgba16f) writeonly uniform image2D framebuffer_dst;
 
 layout(set = 1, binding = 0) uniform Uniforms {
     mat4 u_view_proj;
@@ -316,7 +317,7 @@ vec3 lightColor(Ray ray) {
 
 void main() {
     vec2 pix = vec2(gl_GlobalInvocationID.xy);
-    vec2 size = vec2(imageSize(framebuffer));
+    vec2 size = vec2(imageSize(framebuffer_dst));
 
     seed = (uint(size.x) * uint(pix.y) + uint(pix.x)) * (pass + 1);
 
@@ -338,9 +339,9 @@ void main() {
     vec3 colorOut = lightColor(ray);
 
     // mix with color of last frame
-    // vec3 lastColor = imageLoad(framebuffer, ivec2(pix)).rgb;
-    // float factor = 1.0 / min(pass + 1, 200);
-    // colorOut = mix(lastColor, colorOut, factor);
+    vec3 lastColor = imageLoad(framebuffer_src, ivec2(pix)).rgb;
+    float factor = 1.0 / min(pass + 1, 200);
+    colorOut = mix(lastColor, colorOut, factor);
 
-    imageStore(framebuffer, ivec2(pix), vec4(colorOut, 1));
+    imageStore(framebuffer_dst, ivec2(pix), vec4(colorOut, 1));
 }

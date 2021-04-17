@@ -1,3 +1,5 @@
+use wgpu::Texture;
+
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Vertex {
@@ -95,18 +97,6 @@ impl StorageTexture {
     }
 }
 
-impl From<StorageTexture> for wgpu::BindingType {
-    fn from(_item: StorageTexture) -> Self {
-        wgpu::BindingType::StorageTexture {
-            access: wgpu::StorageTextureAccess::ReadOnly,
-            /// Format of the texture.
-            format: wgpu::TextureFormat::Rgba8Unorm,
-            /// Dimension of the texture view that is going to be sampled.
-            view_dimension: wgpu::TextureViewDimension::D2,
-        }
-    }
-}
-
 pub fn next_power_of_two(n: u32) -> u32 {
     let mut x = n;
     x -= 1;
@@ -124,6 +114,7 @@ pub fn create_texture<'a>(
     width: u32,
     height: u32,
     format: wgpu::TextureFormat,
+    usage: wgpu::TextureUsage,
 ) -> wgpu::Texture {
     return device.create_texture(&wgpu::TextureDescriptor {
         label: Some("Output Texture"),
@@ -136,6 +127,67 @@ pub fn create_texture<'a>(
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format: format,
-        usage: wgpu::TextureUsage::STORAGE,
+        usage: wgpu::TextureUsage::STORAGE | usage,
     });
+}
+
+pub struct FrameBuffer {
+    pub src: wgpu::Texture,
+    pub dst: wgpu::Texture,
+    pub width: u32,
+    pub height: u32,
+}
+
+impl FrameBuffer {
+    pub fn new(width: u32, height: u32, device: &wgpu::Device) -> Self {
+        let (src, dst) = create_frame_buffer_textures(width, height, device);
+        Self {
+            src,
+            dst,
+            width,
+            height,
+        }
+    }
+
+    pub fn resize(&mut self, width: u32, height: u32, device: &wgpu::Device) {
+        self.src.destroy();
+        self.dst.destroy();
+        let (src, dst) = create_frame_buffer_textures(width, height, device);
+        self.src = src;
+        self.dst = dst;
+        self.width = width;
+        self.height = height;
+    }
+
+    pub fn create_views(&self) -> (wgpu::TextureView, wgpu::TextureView) {
+        let frame_buffer_src_view = self
+            .src
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        let frame_buffer_dst_view = self
+            .dst
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        (frame_buffer_src_view, frame_buffer_dst_view)
+    }
+}
+
+fn create_frame_buffer_textures(
+    width: u32,
+    height: u32,
+    device: &wgpu::Device,
+) -> (Texture, Texture) {
+    let src = create_texture(
+        device,
+        width,
+        height,
+        wgpu::TextureFormat::Rgba16Float,
+        wgpu::TextureUsage::COPY_DST,
+    );
+    let dst = create_texture(
+        device,
+        width,
+        height,
+        wgpu::TextureFormat::Rgba16Float,
+        wgpu::TextureUsage::COPY_SRC,
+    );
+    (src, dst)
 }

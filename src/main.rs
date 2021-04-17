@@ -48,7 +48,6 @@ impl Uniforms {
         self.view_proj = (camera.calc_matrix()).into() // TODO add perspective (ratio usw.)
     }
 }
-
 struct State {
     camera: camera::Camera,
     projection: camera::Projection,
@@ -66,7 +65,7 @@ struct State {
     render_pipeline: wgpu::RenderPipeline,
     compute_pipeline: wgpu::ComputePipeline,
 
-    frame_buffer: wgpu::Texture,
+    frame_buffer: lib::FrameBuffer,
 
     vertex_buffer: wgpu::Buffer,
     render_bind_group: wgpu::BindGroup,
@@ -97,7 +96,7 @@ impl State {
             .request_device(
                 &wgpu::DeviceDescriptor {
                     label: None,
-                    features: wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES,
+                    features: wgpu::Features::empty(),
                     limits: wgpu::Limits::default(),
                 },
                 None, // Trace path
@@ -198,18 +197,32 @@ impl State {
         let compute_bind_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("Compute Binder"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStage::COMPUTE,
-                    ty: wgpu::BindingType::StorageTexture {
-                        access: wgpu::StorageTextureAccess::ReadWrite,
-                        /// Format of the texture.
-                        format: wgpu::TextureFormat::Rgba16Float,
-                        /// Dimension of the texture view that is going to be sampled.
-                        view_dimension: wgpu::TextureViewDimension::D2,
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStage::COMPUTE,
+                        ty: wgpu::BindingType::StorageTexture {
+                            access: wgpu::StorageTextureAccess::ReadOnly,
+                            /// Format of the texture.
+                            format: wgpu::TextureFormat::Rgba16Float,
+                            /// Dimension of the texture view that is going to be sampled.
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                        },
+                        count: None,
                     },
-                    count: None,
-                }],
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStage::COMPUTE,
+                        ty: wgpu::BindingType::StorageTexture {
+                            access: wgpu::StorageTextureAccess::WriteOnly,
+                            /// Format of the texture.
+                            format: wgpu::TextureFormat::Rgba16Float,
+                            /// Dimension of the texture view that is going to be sampled.
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                        },
+                        count: None,
+                    },
+                ],
             });
 
         let compute_pipeline = pipeline::create_compute_pipeline(
@@ -219,22 +232,24 @@ impl State {
             Some("ComputePipeline"),
         );
 
-        let frame_buffer = lib::create_texture(
-            &device,
-            size.width,
-            size.height,
-            wgpu::TextureFormat::Rgba16Float,
-        );
-        let frame_buffer_view = frame_buffer.create_view(&wgpu::TextureViewDescriptor::default());
+        let frame_buffer = lib::FrameBuffer::new(size.width, size.height, &device);
+
+        let (fb_src_view, fb_dst_view) = frame_buffer.create_views();
 
         // Instantiates the bind group, once again specifying the binding of buffers.
         let comp_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None,
             layout: &compute_bind_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(&frame_buffer_view),
-            }],
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&fb_src_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&fb_dst_view),
+                },
+            ],
         });
 
         // Instantiates the bind group, once again specifying the binding of buffers.
@@ -243,7 +258,7 @@ impl State {
             layout: &render_bind_layout,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
-                resource: wgpu::BindingResource::TextureView(&frame_buffer_view),
+                resource: wgpu::BindingResource::TextureView(&fb_dst_view),
             }],
         });
 
@@ -285,26 +300,24 @@ impl State {
         self.swap_chain = self.device.create_swap_chain(&self.surface, &self.sc_desc);
         self.projection.resize(self.size.width, self.size.height);
 
-        self.frame_buffer.destroy();
+        self.frame_buffer
+            .resize(self.size.width, self.size.height, &self.device);
 
-        self.frame_buffer = lib::create_texture(
-            &self.device,
-            self.size.width,
-            self.size.height,
-            wgpu::TextureFormat::Rgba16Float,
-        );
-        let frame_buffer_view = self
-            .frame_buffer
-            .create_view(&wgpu::TextureViewDescriptor::default());
-
+        let (fb_src_view, fb_dst_view) = self.frame_buffer.create_views();
         // Instantiates the bind group, once again specifying the binding of buffers.
         self.comp_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None,
             layout: &self.compute_bind_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(&frame_buffer_view),
-            }],
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&fb_src_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&fb_dst_view),
+                },
+            ],
         });
 
         self.render_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -312,7 +325,7 @@ impl State {
             layout: &self.render_bind_layout,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
-                resource: wgpu::BindingResource::TextureView(&frame_buffer_view),
+                resource: wgpu::BindingResource::TextureView(&fb_dst_view),
             }],
         });
 
@@ -376,6 +389,25 @@ impl State {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("Render Encoder"),
             });
+
+        // copy last frame to (currently in dst buffer) to src buffer
+        encoder.copy_texture_to_texture(
+            wgpu::TextureCopyView {
+                texture: &self.frame_buffer.dst,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+            },
+            wgpu::TextureCopyView {
+                texture: &self.frame_buffer.src,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+            },
+            wgpu::Extent3d {
+                width: self.frame_buffer.width,
+                height: self.frame_buffer.height,
+                depth: 1,
+            },
+        );
         {
             let mut c_pass =
                 encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: None });
