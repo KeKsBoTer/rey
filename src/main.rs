@@ -79,7 +79,9 @@ struct State {
 
 impl State {
     async fn new(window: &Window) -> Self {
-        let size = window.inner_size();
+        let mut size = window.inner_size();
+		size.width/=4;
+		size.height/=4;
 
         // The instance is a handle to our GPU
         let instance = wgpu::Instance::new(wgpu::BackendBit::PRIMARY);
@@ -294,7 +296,7 @@ impl State {
     }
 
     fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
-        self.size = new_size;
+        self.size = winit::dpi::PhysicalSize::new(new_size.width/4,new_size.height/4);
         self.sc_desc.width = self.size.width;
         self.sc_desc.height = self.size.height;
         self.swap_chain = self.device.create_swap_chain(&self.surface, &self.sc_desc);
