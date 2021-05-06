@@ -2,6 +2,7 @@ use core::f32;
 use std::iter;
 
 use cgmath::{prelude::*, Vector2};
+use std::borrow::Cow;
 
 use wgpu::util::DeviceExt;
 use winit::{
@@ -67,7 +68,6 @@ struct State {
 
     frame_buffer: lib::FrameBuffer,
 
-    vertex_buffer: wgpu::Buffer,
     render_bind_group: wgpu::BindGroup,
 
     comp_bind_group: wgpu::BindGroup,
@@ -106,7 +106,7 @@ impl State {
 
         let sc_desc = wgpu::SwapChainDescriptor {
             usage: wgpu::TextureUsage::RENDER_ATTACHMENT,
-            format: adapter.get_swap_chain_preferred_format(&surface),
+            format: adapter.get_swap_chain_preferred_format(&surface).unwrap(),
             width: size.width,
             height: size.height,
             present_mode: wgpu::PresentMode::Fifo,
@@ -179,20 +179,18 @@ impl State {
                 push_constant_ranges: &[],
             });
 
+        let flags = wgpu::ShaderFlags::VALIDATION;
+
         let render_pipeline = pipeline::create_render_pipeline(
             &device,
             &render_pipeline_layout,
             sc_desc.format,
-            &[lib::Vertex::desc()],
-            wgpu::include_spirv!("shader.vert.spv"),
-            wgpu::include_spirv!("shader.frag.spv"),
+            wgpu::ShaderModuleDescriptor {
+                label: Some("display_shader"),
+                source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!("display.wgsl"))),
+                flags,
+            },
         );
-
-        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Vertex Buffer"),
-            contents: bytemuck::cast_slice(lib::VERTICES),
-            usage: wgpu::BufferUsage::VERTEX,
-        });
 
         let compute_bind_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -228,7 +226,11 @@ impl State {
         let compute_pipeline = pipeline::create_compute_pipeline(
             &device,
             &[&compute_bind_layout, &uniform_bind_group_layout],
-            wgpu::include_spirv!("shader.comp.spv"),
+            wgpu::ShaderModuleDescriptor {
+                label: Some("display_shader"),
+                source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!("compute.wgsl"))),
+                flags,
+            },
             Some("ComputePipeline"),
         );
 
@@ -281,7 +283,6 @@ impl State {
 
             frame_buffer,
 
-            vertex_buffer,
             render_bind_group,
 
             comp_bind_group,
@@ -417,9 +418,8 @@ impl State {
 
             render_pass.set_pipeline(&self.render_pipeline);
             render_pass.set_bind_group(0, &self.render_bind_group, &[]);
-            render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
             // TODO use draw_indirect
-            render_pass.draw(0..lib::VERTICES.len() as u32, 0..1);
+            render_pass.draw(0..6, 0..1);
         }
 
         // copy last frame to (currently in dst buffer) to src buffer

@@ -1,26 +1,22 @@
-
 pub fn create_render_pipeline(
     device: &wgpu::Device,
     layout: &wgpu::PipelineLayout,
     color_format: wgpu::TextureFormat,
-    vertex_layout: &[wgpu::VertexBufferLayout],
-    vs_src: wgpu::ShaderModuleDescriptor,
-    fs_src: wgpu::ShaderModuleDescriptor,
+    shader_source: wgpu::ShaderModuleDescriptor,
 ) -> wgpu::RenderPipeline {
-    let vs_module = device.create_shader_module(&vs_src);
-    let fs_module = device.create_shader_module(&fs_src);
+    let shader_module = device.create_shader_module(&shader_source);
 
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("Render Pipeline"),
         layout: Some(layout),
         vertex: wgpu::VertexState {
-            module: &vs_module,
-            entry_point: "main",
-            buffers: vertex_layout,
+            module: &shader_module,
+            entry_point: "vs_main",
+            buffers: &[],
         },
         fragment: Some(wgpu::FragmentState {
-            module: &fs_module,
-            entry_point: "main",
+            module: &shader_module,
+            entry_point: "fs_main",
             targets: &[wgpu::ColorTargetState {
                 format: color_format,
                 blend: Some(wgpu::BlendState::REPLACE),
@@ -28,20 +24,13 @@ pub fn create_render_pipeline(
             }],
         }),
         primitive: wgpu::PrimitiveState {
-            topology: wgpu::PrimitiveTopology::TriangleStrip,
-            strip_index_format: Some(wgpu::IndexFormat::Uint32),
-            front_face: wgpu::FrontFace::Ccw,
-            cull_mode: None,
-            // Setting this to anything other than Fill requires Features::NON_FILL_POLYGON_MODE
-            polygon_mode: wgpu::PolygonMode::Fill,
+            topology: wgpu::PrimitiveTopology::TriangleList,
             ..Default::default()
         },
         depth_stencil: None,
         multisample: wgpu::MultisampleState::default(),
     })
 }
-
-
 
 pub fn create_compute_pipeline(
     device: &wgpu::Device,
