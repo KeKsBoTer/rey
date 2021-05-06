@@ -14,7 +14,7 @@ impl Vertex {
             attributes: &[wgpu::VertexAttribute {
                 offset: 0,
                 shader_location: 0,
-                format: wgpu::VertexFormat::Float3,
+                format: wgpu::VertexFormat::Float32x3,
             }],
         }
     }
@@ -59,7 +59,7 @@ impl StorageTexture {
             size: wgpu::Extent3d {
                 width: width,
                 height: height,
-                depth: 1,
+                depth_or_array_layers: 1,
             },
             mip_level_count: 1,
             sample_count: 1,
@@ -79,7 +79,7 @@ impl StorageTexture {
             size: wgpu::Extent3d {
                 width: width,
                 height: height,
-                depth: 1,
+                depth_or_array_layers: 1,
             },
             mip_level_count: 1,
             sample_count: 1,
@@ -121,7 +121,7 @@ pub fn create_texture<'a>(
         size: wgpu::Extent3d {
             width: width,
             height: height,
-            depth: 1,
+            depth_or_array_layers: 1,
         },
         mip_level_count: 1,
         sample_count: 1,
@@ -148,7 +148,7 @@ pub fn create_empty_texture<'a>(
             size: wgpu::Extent3d {
                 width: width,
                 height: height,
-                depth: 1,
+                depth_or_array_layers: 1,
             },
             mip_level_count: 1,
             sample_count: 1,

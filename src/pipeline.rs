@@ -23,8 +23,7 @@ pub fn create_render_pipeline(
             entry_point: "main",
             targets: &[wgpu::ColorTargetState {
                 format: color_format,
-                alpha_blend: wgpu::BlendState::REPLACE,
-                color_blend: wgpu::BlendState::REPLACE,
+                blend: Some(wgpu::BlendState::REPLACE),
                 write_mask: wgpu::ColorWrite::ALL,
             }],
         }),
@@ -32,16 +31,13 @@ pub fn create_render_pipeline(
             topology: wgpu::PrimitiveTopology::TriangleStrip,
             strip_index_format: Some(wgpu::IndexFormat::Uint32),
             front_face: wgpu::FrontFace::Ccw,
-            cull_mode: wgpu::CullMode::None,
+            cull_mode: None,
             // Setting this to anything other than Fill requires Features::NON_FILL_POLYGON_MODE
             polygon_mode: wgpu::PolygonMode::Fill,
+            ..Default::default()
         },
         depth_stencil: None,
-        multisample: wgpu::MultisampleState {
-            count: 1,
-            mask: !0,
-            alpha_to_coverage_enabled: false,
-        },
+        multisample: wgpu::MultisampleState::default(),
     })
 }
 

@@ -404,8 +404,8 @@ impl State {
         {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Render Pass"),
-                color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
-                    attachment: &frame.view,
+                color_attachments: &[wgpu::RenderPassColorAttachment {
+                    view: &frame.view,
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Load,
@@ -424,12 +424,12 @@ impl State {
 
         // copy last frame to (currently in dst buffer) to src buffer
         encoder.copy_texture_to_texture(
-            wgpu::TextureCopyView {
+            wgpu::ImageCopyTexture {
                 texture: &self.frame_buffer.dst,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
             },
-            wgpu::TextureCopyView {
+            wgpu::ImageCopyTexture {
                 texture: &self.frame_buffer.src,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
@@ -437,7 +437,7 @@ impl State {
             wgpu::Extent3d {
                 width: self.frame_buffer.width,
                 height: self.frame_buffer.height,
-                depth: 1,
+                depth_or_array_layers: 1,
             },
         );
 
