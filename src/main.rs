@@ -12,6 +12,7 @@ use winit::{
 };
 
 mod camera;
+mod cornell_box;
 mod lib;
 mod pipeline;
 
@@ -21,6 +22,7 @@ struct Uniforms {
     view_proj: [[f32; 4]; 4],
     time: f32,
     pass: u32,
+    num_faces: u32,
 }
 
 impl Uniforms {
@@ -29,6 +31,7 @@ impl Uniforms {
             view_proj: cgmath::Matrix4::identity().into(),
             time: 0.0,
             pass: 0,
+            num_faces: 0,
         }
     }
 
@@ -45,7 +48,7 @@ impl Uniforms {
     }
 
     // UPDATED!
-    fn update_view_proj(&mut self, camera: &camera::Camera, projection: &camera::Projection) {
+    fn update_view_proj(&mut self, camera: &camera::Camera, _projection: &camera::Projection) {
         self.view_proj = (camera.calc_matrix()).into() // TODO add perspective (ratio usw.)
     }
 }
@@ -68,11 +71,13 @@ struct State {
 
     frame_buffer: lib::FrameBuffer,
 
+    render_bind_layout: wgpu::BindGroupLayout,
     render_bind_group: wgpu::BindGroup,
 
-    comp_bind_group: wgpu::BindGroup,
-    render_bind_layout: wgpu::BindGroupLayout,
-    compute_bind_layout: wgpu::BindGroupLayout,
+    framebuffer_bind_group_layout: wgpu::BindGroupLayout,
+    framebuffer_bind_group: wgpu::BindGroup,
+
+    vertex_bind_group: wgpu::BindGroup,
 
     mouse_pressed: bool,
 }
@@ -114,16 +119,17 @@ impl State {
         let swap_chain = device.create_swap_chain(&surface, &sc_desc);
 
         let camera = camera::Camera::new(
-            (0.0, 0.0, -10.0),
+            (250.0, 350.0, -260.0),
             cgmath::Deg(0.0),
             cgmath::Deg(0.0),
             cgmath::Deg(0.0),
         );
         let projection = camera::Projection::new(sc_desc.width, sc_desc.height, cgmath::Deg(45.0));
-        let camera_controller = camera::CameraController::new(4.0, 0.4);
+        let camera_controller = camera::CameraController::new(400.0, 0.4);
 
         let mut uniforms = Uniforms::new();
         uniforms.update_view_proj(&camera, &projection);
+        uniforms.num_faces = cornell_box::FACES.len() as u32;
 
         let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Uniform Buffer"),
@@ -143,7 +149,7 @@ impl State {
                     },
                     count: None,
                 }],
-                label: Some("uniform_bind_group_layout"),
+                label: Some("uniform_bind_layout"),
             });
 
         let uniform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -192,7 +198,7 @@ impl State {
             },
         );
 
-        let compute_bind_layout =
+        let framebuffer_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("Compute Binder"),
                 entries: &[
@@ -223,25 +229,14 @@ impl State {
                 ],
             });
 
-        let compute_pipeline = pipeline::create_compute_pipeline(
-            &device,
-            &[&compute_bind_layout, &uniform_bind_group_layout],
-            wgpu::ShaderModuleDescriptor {
-                label: Some("display_shader"),
-                source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!("compute.wgsl"))),
-                flags,
-            },
-            Some("ComputePipeline"),
-        );
-
         let frame_buffer = lib::FrameBuffer::new(size.width, size.height, &device, &queue);
 
         let (fb_src_view, fb_dst_view) = frame_buffer.create_views();
 
         // Instantiates the bind group, once again specifying the binding of buffers.
-        let comp_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let framebuffer_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None,
-            layout: &compute_bind_layout,
+            layout: &framebuffer_bind_group_layout,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
@@ -253,6 +248,75 @@ impl State {
                 },
             ],
         });
+
+        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Vertex Buffer"),
+            contents: bytemuck::cast_slice(&cornell_box::VERTICES),
+            usage: wgpu::BufferUsage::STORAGE,
+        });
+
+        let face_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("face buffer"),
+            contents: bytemuck::cast_slice(&cornell_box::FACES),
+            usage: wgpu::BufferUsage::STORAGE,
+        });
+
+        let vertex_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("vertex bind layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStage::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStage::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
+            });
+
+        let vertex_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("vertex bind group"),
+            layout: &vertex_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: vertex_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: face_buffer.as_entire_binding(),
+                },
+            ],
+        });
+
+        let compute_pipeline = pipeline::create_compute_pipeline(
+            &device,
+            &[
+                &framebuffer_bind_group_layout,
+                &uniform_bind_group_layout,
+                &vertex_bind_group_layout,
+            ],
+            wgpu::ShaderModuleDescriptor {
+                label: Some("display_shader"),
+                source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!("compute.wgsl"))),
+                flags,
+            },
+            Some("ComputePipeline"),
+        );
 
         // Instantiates the bind group, once again specifying the binding of buffers.
         let render_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -283,12 +347,13 @@ impl State {
 
             frame_buffer,
 
+            render_bind_layout,
             render_bind_group,
 
-            comp_bind_group,
+            framebuffer_bind_group_layout,
+            framebuffer_bind_group,
 
-            render_bind_layout,
-            compute_bind_layout,
+            vertex_bind_group,
 
             mouse_pressed: false,
         }
@@ -307,9 +372,9 @@ impl State {
         let (fb_src_view, fb_dst_view) = self.frame_buffer.create_views();
 
         // Instantiates the bind group, once again specifying the binding of buffers.
-        self.comp_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        self.framebuffer_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None,
-            layout: &self.compute_bind_layout,
+            layout: &self.framebuffer_bind_group_layout,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
@@ -377,7 +442,7 @@ impl State {
         );
     }
 
-    fn render(&mut self, dt: std::time::Duration) -> Result<(), wgpu::SwapChainError> {
+    fn render(&mut self, _dt: std::time::Duration) -> Result<(), wgpu::SwapChainError> {
         //println!("{:} FPS",1000/(dt.as_millis()+1));
         let frame = self.swap_chain.get_current_frame()?.output;
 
@@ -395,8 +460,9 @@ impl State {
             let mut c_pass =
                 encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: None });
             c_pass.set_pipeline(&self.compute_pipeline);
-            c_pass.set_bind_group(0, &self.comp_bind_group, &[]);
+            c_pass.set_bind_group(0, &self.framebuffer_bind_group, &[]);
             c_pass.set_bind_group(1, &self.uniform_bind_group, &[]);
+            c_pass.set_bind_group(2, &self.vertex_bind_group, &[]);
             c_pass.insert_debug_marker("compute stuff");
             // TODO use dispatch_indirect
             c_pass.dispatch(width_groups, height_groups, 1); // Number of cells to run, the (x,y,z) size of item being processed
@@ -445,6 +511,8 @@ impl State {
 
         self.uniforms.increment_pass();
 
+        self.device.poll(wgpu::Maintain::Wait);
+
         Ok(())
     }
 }
@@ -483,7 +551,6 @@ fn main() {
                     keyboard_input => {
                         global_state.input(&DeviceEvent::Key(*keyboard_input));
                     }
-                    _ => {}
                 },
                 WindowEvent::CursorMoved { position, .. } => {
                     global_state.input(&DeviceEvent::MouseMotion {

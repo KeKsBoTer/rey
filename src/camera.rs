@@ -1,7 +1,7 @@
 use cgmath::*;
-use winit::{dpi::{PhysicalPosition}, event::*};
-use std::{f32::consts::FRAC_PI_2};
+use std::f32::consts::FRAC_PI_2;
 use std::time::Duration;
+use winit::{dpi::PhysicalPosition, event::*};
 
 #[derive(Debug)]
 pub struct Camera {
@@ -27,9 +27,9 @@ impl Camera {
     }
 
     pub fn rot_matrix(&self) -> Matrix4<f32> {
-        Matrix4::from_angle_x(self.pitch) *
-        Matrix4::from_angle_y(self.yaw) *
-        Matrix4::from_angle_z(self.roll)
+        Matrix4::from_angle_x(self.pitch)
+            * Matrix4::from_angle_y(self.yaw)
+            * Matrix4::from_angle_z(self.roll)
     }
 
     pub fn calc_matrix(&self) -> Matrix4<f32> {
@@ -42,12 +42,11 @@ pub struct Projection {
     fovy: Rad<f32>,
 }
 
-
 impl Projection {
     pub fn new<F: Into<Rad<f32>>>(width: u32, height: u32, fovy: F) -> Self {
         Self {
             aspect: width as f32 / height as f32,
-            fovy: fovy.into()
+            fovy: fovy.into(),
         }
     }
 
@@ -141,8 +140,8 @@ impl CameraController {
 
         let proj = camera.rot_matrix();
 
-        let forward:Vector3<f32> = proj.transform_vector(Vector3::new(0.,0.,1.));
-        let right:Vector3<f32> = proj.transform_vector(Vector3::new(1.,0.,0.));
+        let forward: Vector3<f32> = proj.transform_vector(Vector3::new(0., 0., 1.));
+        let right: Vector3<f32> = proj.transform_vector(Vector3::new(1., 0., 0.));
 
         camera.position += forward * (self.amount_forward - self.amount_backward) * self.speed * dt;
         camera.position += right * (self.amount_right - self.amount_left) * self.speed * dt;
