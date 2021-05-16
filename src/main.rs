@@ -1,15 +1,16 @@
 use core::f32;
-use std::iter;
+use std::{iter, sync::Arc};
 
 use cgmath::{prelude::*, Vector2};
+use epi::*;
 use std::borrow::Cow;
 
 use wgpu::util::DeviceExt;
-use winit::{
-    event::*,
-    event_loop::{ControlFlow, EventLoop},
-    window::Window,
-};
+use winit::{event::*, event_loop::ControlFlow, window::Window};
+
+use egui::FontDefinitions;
+use egui_wgpu_backend::{RenderPass, ScreenDescriptor};
+use egui_winit_platform::{Platform, PlatformDescriptor};
 
 mod camera;
 mod cornell_box;
@@ -22,6 +23,7 @@ struct Uniforms {
     view_proj: [[f32; 4]; 4],
     time: f32,
     pass: u32,
+    num_samples: u32,
     num_faces: u32,
 }
 
@@ -31,6 +33,7 @@ impl Uniforms {
             view_proj: cgmath::Matrix4::identity().into(),
             time: 0.0,
             pass: 0,
+            num_samples: 1,
             num_faces: 0,
         }
     }
@@ -52,6 +55,26 @@ impl Uniforms {
         self.view_proj = (camera.calc_matrix()).into() // TODO add perspective (ratio usw.)
     }
 }
+
+/// A custom event type for the winit app.
+enum EGUIEvent {
+    RequestRedraw,
+}
+
+/// This is the repaint signal type that egui needs for requesting a repaint from another thread.
+/// It sends the custom RequestRedraw event to the winit event loop.
+struct ExampleRepaintSignal(std::sync::Mutex<winit::event_loop::EventLoopProxy<EGUIEvent>>);
+
+impl epi::RepaintSignal for ExampleRepaintSignal {
+    fn request_repaint(&self) {
+        self.0
+            .lock()
+            .unwrap()
+            .send_event(EGUIEvent::RequestRedraw)
+            .ok();
+    }
+}
+
 struct State {
     camera: camera::Camera,
     projection: camera::Projection,
@@ -66,6 +89,7 @@ struct State {
     sc_desc: wgpu::SwapChainDescriptor,
     swap_chain: wgpu::SwapChain,
     size: winit::dpi::PhysicalSize<u32>,
+    scale_factor: f64,
     render_pipeline: wgpu::RenderPipeline,
     compute_pipeline: wgpu::ComputePipeline,
 
@@ -80,6 +104,11 @@ struct State {
     vertex_bind_group: wgpu::BindGroup,
 
     mouse_pressed: bool,
+
+    // egui stuff
+    platform: Platform,
+    egui_rpass: RenderPass,
+    demo_app: egui_demo_lib::WrapApp,
 }
 
 impl State {
@@ -109,9 +138,11 @@ impl State {
             .await
             .unwrap();
 
+        let color_format = adapter.get_swap_chain_preferred_format(&surface).unwrap();
+
         let sc_desc = wgpu::SwapChainDescriptor {
             usage: wgpu::TextureUsage::RENDER_ATTACHMENT,
-            format: adapter.get_swap_chain_preferred_format(&surface).unwrap(),
+            format: color_format,
             width: size.width,
             height: size.height,
             present_mode: wgpu::PresentMode::Fifo,
@@ -328,6 +359,23 @@ impl State {
             }],
         });
 
+        let scale_factor = window.scale_factor();
+
+        // We use the egui_winit_platform crate as the platform.
+        let platform = Platform::new(PlatformDescriptor {
+            physical_width: size.width as u32,
+            physical_height: size.height as u32,
+            scale_factor: scale_factor,
+            font_definitions: FontDefinitions::default(),
+            style: Default::default(),
+        });
+
+        // We use the egui_wgpu_backend crate as the render backend.
+        let egui_rpass = RenderPass::new(&device, color_format);
+
+        // Display the demo application that ships with egui.
+        let demo_app = egui_demo_lib::WrapApp::default();
+
         Self {
             camera,
             projection,
@@ -342,6 +390,7 @@ impl State {
             sc_desc,
             swap_chain,
             size,
+            scale_factor,
             render_pipeline,
             compute_pipeline,
 
@@ -356,6 +405,10 @@ impl State {
             vertex_bind_group,
 
             mouse_pressed: false,
+
+            platform,
+            egui_rpass,
+            demo_app,
         }
     }
 
@@ -401,9 +454,7 @@ impl State {
         println!("{:} {:}", self.size.width, self.size.height);
     }
 
-    // UPDATED!
     fn input(&mut self, event: &DeviceEvent) -> bool {
-        //println!("{:?}",event);
         match event {
             DeviceEvent::Key(KeyboardInput {
                 virtual_keycode: Some(key),
@@ -425,7 +476,6 @@ impl State {
     }
 
     fn update(&mut self, dt: std::time::Duration) {
-        // UPDATED!
         let before = self.camera.calc_matrix();
         self.camera_controller.update_camera(&mut self.camera, dt);
         if self.camera.calc_matrix() != before {
@@ -442,9 +492,38 @@ impl State {
         );
     }
 
-    fn render(&mut self, _dt: std::time::Duration) -> Result<(), wgpu::SwapChainError> {
+    fn render(
+        &mut self,
+        _dt: std::time::Duration,
+        repaint_signal: Arc<dyn RepaintSignal>,
+    ) -> Result<(), wgpu::SwapChainError> {
         //println!("{:} FPS",1000/(dt.as_millis()+1));
         let frame = self.swap_chain.get_current_frame()?.output;
+
+        // Begin to draw the UI frame.
+        self.platform.begin_frame();
+        let mut app_output = epi::backend::AppOutput::default();
+
+        let mut egui_frame = epi::backend::FrameBuilder {
+            info: epi::IntegrationInfo {
+                web_info: None,
+                cpu_usage: None,
+                seconds_since_midnight: None,
+                native_pixels_per_point: None,
+            },
+            tex_allocator: &mut self.egui_rpass,
+            output: &mut app_output,
+            repaint_signal: repaint_signal.clone(),
+        }
+        .build();
+
+        // Draw the demo application.
+        self.demo_app
+            .update(&self.platform.context(), &mut egui_frame);
+
+        // End the UI frame. We could now handle the output and draw the UI with the backend.
+        let (_output, paint_commands) = self.platform.end_frame();
+        let paint_jobs = self.platform.context().tessellate(paint_commands);
 
         let group_size = Vector2::new(32, 16);
         let width_groups = lib::next_power_of_two(self.size.width / group_size.x);
@@ -487,6 +566,35 @@ impl State {
             // TODO use draw_indirect
             render_pass.draw(0..6, 0..1);
         }
+        {
+            let screen_descriptor = ScreenDescriptor {
+                physical_width: self.size.width,
+                physical_height: self.size.height,
+                scale_factor: self.scale_factor as f32,
+            };
+            self.egui_rpass.update_texture(
+                &self.device,
+                &self.queue,
+                &self.platform.context().texture(),
+            );
+            self.egui_rpass
+                .update_user_textures(&self.device, &self.queue);
+            self.egui_rpass.update_buffers(
+                &mut self.device,
+                &mut self.queue,
+                &paint_jobs,
+                &screen_descriptor,
+            );
+
+            // Record all render passes.
+            self.egui_rpass.execute(
+                &mut encoder,
+                &frame.view,
+                &paint_jobs,
+                &screen_descriptor,
+                None,
+            );
+        }
 
         // copy last frame to (currently in dst buffer) to src buffer
         encoder.copy_texture_to_texture(
@@ -518,67 +626,81 @@ impl State {
 }
 
 fn main() {
-    env_logger::init();
-    let event_loop = EventLoop::new();
+    let event_loop = winit::event_loop::EventLoop::with_user_event();
     let title = env!("CARGO_PKG_NAME");
     let window = winit::window::WindowBuilder::new()
         .with_title(title)
         .build(&event_loop)
         .unwrap();
     use futures::executor::block_on;
-    let mut global_state = block_on(State::new(&window)); // NEW!
+    let mut global_state = block_on(State::new(&window));
     let mut last_render_time = std::time::Instant::now();
     let mut last_pos: (f64, f64) = (0., 0.);
-    event_loop.run(move |event, _, control_flow| {
+
+    let repaint_signal = std::sync::Arc::new(ExampleRepaintSignal(std::sync::Mutex::new(
+        event_loop.create_proxy(),
+    )));
+
+    event_loop.run(move |winit_event, _, control_flow| {
         *control_flow = ControlFlow::Poll;
-        match event {
+        global_state.platform.handle_event(&winit_event);
+        match winit_event {
             Event::MainEventsCleared => window.request_redraw(),
             // UPDATED!
             Event::WindowEvent {
                 ref event,
                 window_id,
-            } if window_id == window.id() => match event {
-                WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
-                WindowEvent::Destroyed => *control_flow = ControlFlow::Exit,
-                WindowEvent::KeyboardInput { input, .. } => match input {
-                    KeyboardInput {
-                        state: ElementState::Pressed,
-                        virtual_keycode: Some(VirtualKeyCode::Escape),
+            } if window_id == window.id()
+                && !global_state.platform.captures_event(&winit_event) =>
+            {
+                match event {
+                    WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
+                    WindowEvent::Destroyed => *control_flow = ControlFlow::Exit,
+                    WindowEvent::KeyboardInput { input, .. } => match input {
+                        KeyboardInput {
+                            state: ElementState::Pressed,
+                            virtual_keycode: Some(VirtualKeyCode::Escape),
+                            ..
+                        } => {
+                            *control_flow = ControlFlow::Exit;
+                        }
+                        keyboard_input => {
+                            global_state.input(&DeviceEvent::Key(*keyboard_input));
+                        }
+                    },
+                    WindowEvent::CursorMoved { position, .. } => {
+                        global_state.input(&DeviceEvent::MouseMotion {
+                            delta: (position.x - last_pos.0, position.y - last_pos.1),
+                        });
+                        last_pos = (position.x, position.y);
+                    }
+                    WindowEvent::MouseInput {
+                        state,
+                        button: MouseButton::Left,
                         ..
                     } => {
-                        *control_flow = ControlFlow::Exit;
+                        global_state.mouse_pressed = *state == ElementState::Pressed;
                     }
-                    keyboard_input => {
-                        global_state.input(&DeviceEvent::Key(*keyboard_input));
+                    WindowEvent::Resized(physical_size) => {
+                        global_state.resize(*physical_size);
                     }
-                },
-                WindowEvent::CursorMoved { position, .. } => {
-                    global_state.input(&DeviceEvent::MouseMotion {
-                        delta: (position.x - last_pos.0, position.y - last_pos.1),
-                    });
-                    last_pos = (position.x, position.y);
+                    WindowEvent::ScaleFactorChanged {
+                        scale_factor,
+                        new_inner_size,
+                        ..
+                    } => {
+                        global_state.scale_factor = *scale_factor;
+                        global_state.resize(**new_inner_size);
+                    }
+                    _ => {}
                 }
-                WindowEvent::MouseInput {
-                    state,
-                    button: MouseButton::Left,
-                    ..
-                } => {
-                    global_state.mouse_pressed = *state == ElementState::Pressed;
-                }
-                WindowEvent::Resized(physical_size) => {
-                    global_state.resize(*physical_size);
-                }
-                WindowEvent::ScaleFactorChanged { new_inner_size, .. } => {
-                    global_state.resize(**new_inner_size);
-                }
-                _ => {}
-            },
+            }
             Event::RedrawRequested(_) => {
                 let now = std::time::Instant::now();
                 let dt = now - last_render_time;
                 last_render_time = now;
                 global_state.update(dt);
-                match global_state.render(dt) {
+                match global_state.render(dt, repaint_signal.clone()) {
                     Ok(_) => {}
                     // Recreate the swap_chain if lost
                     Err(wgpu::SwapChainError::Lost) => global_state.resize(global_state.size),

@@ -16,6 +16,7 @@ struct Uniforms {
     u_view_proj: mat4x4<f32>;
     time: f32;
     pass: u32;
+    num_samples: u32;
 	num_faces: u32; // TODO remove when array
 };
 
@@ -107,11 +108,10 @@ fn randomUnitVector() -> vec3<f32> {
 }
 
 fn cast_ray_from_camera(c: Camera, uv:vec2<f32>) -> Ray{
-    let ray =
-        normalize(vec3<f32>((uv.x - 0.5) * c.ratio, -(uv.y - 0.5), c.focal_length));
+    let ray = vec3<f32>((uv.x - 0.5) * c.ratio, -(uv.y - 0.5), c.focal_length);
     let center = (uniforms.u_view_proj * vec4<f32>(0.0, 0.0, 0.0, 1.0)).xyz;
-    return Ray(center,
-               (uniforms.u_view_proj * vec4<f32>(ray, 1.0)).xyz - center);
+	let dir = normalize((uniforms.u_view_proj * vec4<f32>(ray, 1.0)).xyz - center);
+    return Ray(center,dir);
 }
 
 var intersec: Intersection = Intersection(
@@ -282,14 +282,13 @@ fn lightColor(init_ray:Ray) -> vec3<f32> {
         ray.orig = intersec.pos;
         ray.dir =  d;
 
-        let lightRay = (light.center) - intersec.pos;
+        let lightRay = (light.center + randomUnitVector() * light.radius) - intersec.pos;
         let lightDir = normalize(lightRay);
 
         // if (dot(-lightDir, c * intersec.normal) >= 0.0) {
         //     continue;
         // }
-        // TODO add max distance param to hitScene inorder to make light check
-        // easier
+
         let o_normal = intersec.normal;
         let hitAny = hitScene(Ray(intersec.pos, lightDir));
 
@@ -298,7 +297,7 @@ fn lightColor(init_ray:Ray) -> vec3<f32> {
 			let sphere_radius = spheres[0].radius;
 
             let cos_a_max =
-                sqrt(1.0 - clamp(sphere_radius*sphere_radius / (intersec.lambda * intersec.lambda), 0.0, 1.0));
+                sqrt(1.0 - clamp(sphere_radius * sphere_radius / (intersec.lambda * intersec.lambda), 0.0, 1.0));
             let weight = 2.0 * (1.0 - cos_a_max);
             // calc next event estimation
             color = color + (mask * lightMaterial.color.rgb * lightMaterial.color.a) *
@@ -323,9 +322,13 @@ fn main([[builtin(global_invocation_id)]] gid: vec3<u32>) {
 
     let rnd = randomUnitVector();
 
-    let ray = cast_ray_from_camera(c, vec2<f32>(pix) / vec2<f32>(size) + rnd.xy / (2.0 * f32(size.x)));
 
-    var colorOut: vec3<f32> = lightColor(ray);
+    var colorOut: vec3<f32> = vec3<f32>(0.,0.,0.);
+	for (var s:u32=0u;s<uniforms.num_samples; s = s+1u){
+    	let ray = cast_ray_from_camera(c, vec2<f32>(pix) / vec2<f32>(size) + rnd.xy / (2.0 * f32(size.x)));
+		colorOut = colorOut + lightColor(ray);
+	}
+	colorOut = colorOut / f32(uniforms.num_samples);
 
     // mix with color of last frame
     let lastColor = textureLoad(framebuffer_src, vec2<i32>(pix)).rgb;
